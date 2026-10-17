@@ -62,6 +62,13 @@ void MapLane::refresh()
             changed = true;
         }
         bpm = t.bpm;
+        const double ls = t.looping ? t.loopStart : 0.0, le = t.looping ? t.loopEnd : 0.0;
+        if (! juce::exactlyEqual (ls, loopStart) || ! juce::exactlyEqual (le, loopEnd))
+        {
+            loopStart = ls;
+            loopEnd = le;
+            changed = true;
+        }
     }
     if (proc.getMapRevision() != seenRevision && dragIndex < 0)
     {
@@ -147,13 +154,22 @@ void MapLane::draw (juce::Graphics& g)
         caption (g, "Clear", c, juce::Justification::centred, col::ink, 9.f);
     }
 
+    // Bar numbers 60 px or more apart however long the map is; lines closer than
+    // 4 px are left out (a long map would turn grey with them).
+    const double span = toPpq - fromPpq;
+    const double barPx = plot.getWidth() * barLength / span, beatPx = plot.getWidth() * beatLength / span;
+    int every = 1;
+    while (every * barPx < 60.0) every *= 2;
+
     // Grid: beats faint, bars and the zero line stronger.
     {
         juce::Path minor, major;
         for (double b = fromPpq; b <= toPpq + 1e-6; b += beatLength)
         {
             const bool bar = std::abs (std::remainder (b, barLength)) < 1e-6;
-            (bar ? major : minor).addRectangle (xOf (b), plot.getY(), 1.f, plot.getHeight());
+            const bool numbered = bar && std::lround (b / barLength) % every == 0;
+            if (bar ? barPx >= 4.0 || numbered : beatPx >= 4.0)
+                (bar ? major : minor).addRectangle (xOf (b), plot.getY(), 1.f, plot.getHeight());
         }
         for (double d : { -90.0, 90.0 })
             minor.addRectangle (plot.getX(), yOf (d), plot.getWidth(), 1.f);
@@ -170,8 +186,6 @@ void MapLane::draw (juce::Graphics& g)
     for (auto [deg, name] : { std::pair { 180.0, "180" }, { 90.0, "90" }, { 0.0, "0" }, { -90.0, "-90" }, { -180.0, "-180" } })
         g.drawText (juce::String (name).replace ("-", juce::CharPointer_UTF8 ("\xe2\x88\x92")),
                     juce::Rectangle<float> (0.f, yOf (deg) - 6.f, 30.f, 12.f), juce::Justification::centredRight, false);
-    const double bars = (toPpq - fromPpq) / barLength;
-    const int every = bars > 32.0 ? 8 : bars > 16.0 ? 4 : bars > 8.0 ? 2 : 1;
     for (double b = fromPpq; b < toPpq - 1e-6; b += barLength)
     {
         const int number = (int) std::lround (b / barLength) + 1;
@@ -200,7 +214,7 @@ void MapLane::draw (juce::Graphics& g)
         for (int c = 0; c <= cols; ++c)
         {
             const double ppq = fromPpq + (toPpq - fromPpq) * c / cols;
-            const double a = map.angleAt (ppq, bpm);
+            const double a = map.angleAt (ppq, bpm, loopStart, loopEnd);
             const juce::Point<float> at (plot.getX() + (float) c, yOf (a));
             if (c == 0 || std::abs (a - last) > 180.0) line.startNewSubPath (at); else line.lineTo (at);
             last = a;
@@ -222,6 +236,9 @@ void MapLane::draw (juce::Graphics& g)
     {
         const auto& p = map.points[(size_t) i];
         const float x = xOf (p.ppq), y = yOf (p.deg);
+        const float prev = i > 0 ? xOf (map.points[(size_t) i - 1].ppq) : -1e9f;
+        const float next = i + 1 < map.size() ? xOf (map.points[(size_t) i + 1].ppq) : 1e9f;
+        const float room = std::min (x - prev, next - x);
         if (p.edited)
         {
             g.setColour (col::ink.withAlpha (0.5f));
@@ -232,7 +249,9 @@ void MapLane::draw (juce::Graphics& g)
             g.setColour (col::ink);
             g.drawEllipse (juce::Rectangle<float> (13.f, 13.f).withCentre ({ x, y }), 1.f);
         }
-        const auto dot = juce::Rectangle<float> (i == hover || i == dragIndex ? 9.f : 7.f, i == hover || i == dragIndex ? 9.f : 7.f).withCentre ({ x, y });
+        // Dense maps (a whole song) get smaller dots, so they don't run into one line.
+        const float d = i == hover || i == dragIndex ? 9.f : juce::jlimit (3.f, 7.f, room - 1.f);
+        const auto dot = juce::Rectangle<float> (d, d).withCentre ({ x, y });
         g.setColour (p.edited ? col::paper : col::accent);
         g.fillEllipse (dot);
         if (p.edited)
@@ -241,9 +260,7 @@ void MapLane::draw (juce::Graphics& g)
             g.drawEllipse (dot.reduced (0.75f), 1.5f);
         }
 
-        const float prev = i > 0 ? xOf (map.points[(size_t) i - 1].ppq) : -1e9f;
-        const float next = i + 1 < map.size() ? xOf (map.points[(size_t) i + 1].ppq) : 1e9f;
-        if (std::min (x - prev, next - x) >= 34.f || i == hover || i == dragIndex)
+        if (room >= 34.f || i == hover || i == dragIndex)
         {
             const bool below = y < plot.getY() + 16.f;
             const auto box = juce::Rectangle<float> (44.f, 12.f).withCentre ({ x, below ? y + 12.f : y - 12.f });
@@ -319,7 +336,7 @@ void MapLane::mouseDrag (const juce::MouseEvent& e)
     dragDeg = pf::wrapDeg (dragDeg - (e.position.y - dragY) / span * 360.0 * (e.mods.isShiftDown() ? 0.1 : 1.0));
     dragY = e.position.y;
     map.edit (dragIndex, dragDeg);
-    proc.editMapPoint (dragIndex, dragDeg);
+    proc.editMapPoint (map.points[(size_t) dragIndex].ppq, dragDeg);
     repaint();
 }
 
@@ -335,7 +352,7 @@ void MapLane::mouseDoubleClick (const juce::MouseEvent& e)
 {
     if (const int i = pointAt (e.position); i >= 0)
     {
-        proc.editMapPoint (i, map.points[(size_t) i].learnedDeg);
+        proc.editMapPoint (map.points[(size_t) i].ppq, map.points[(size_t) i].learnedDeg);
         refresh();
     }
 }

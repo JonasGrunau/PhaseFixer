@@ -47,6 +47,40 @@ TEST_CASE ("Phase map holds each hit's turn while it rings, then glides to the n
     }
 }
 
+TEST_CASE ("Phase map runs round a loop: the last hit glides into the first", "[map]")
+{
+    const auto m = fourHits();   // beats 1-4 of bar 1: 10, 100, -170, 170 degrees
+    const double bpm = 120.0, ms = bpm / 60000.0;
+
+    // Looping bar 1: the last hit rings, then glides into the first one's
+    // turn, landing 5 ms before the loop comes round. Without the loop it holds.
+    const double land = 4.0 - 5.0 * ms, start = land - 250.0 * ms;
+    CHECK_THAT (m.angleAt (start, bpm, 0.0, 4.0), WithinAbs (170.0, 1e-9));
+    CHECK_THAT (m.angleAt (0.5 * (start + land), bpm, 0.0, 4.0), WithinAbs (90.0, 1e-6));   // 170 to 10 through 90
+    CHECK_THAT (m.angleAt (land, bpm, 0.0, 4.0), WithinAbs (10.0, 1e-9));
+    CHECK_THAT (m.angleAt (land, bpm), WithinAbs (170.0, 1e-9));
+
+    // A loop starting after a hit: before its first hit the turn comes from
+    // its last one, the pass before.
+    CHECK_THAT (m.angleAt (0.3, bpm, 0.25, 4.25), WithinAbs (170.0, 1e-9));
+    CHECK_THAT (m.angleAt (0.3, bpm), WithinAbs (10.0, 1e-9));
+
+    // Played through the wrap, looking back by the latency as the plugin
+    // does: what comes out right after the wrap is the end of the last pass,
+    // so the turn never jumps.
+    CHECK_THAT (timelineBefore (0.01, 0.1, 0.0, 4.0), WithinAbs (3.91, 1e-9));
+    CHECK_THAT (timelineBefore (0.01, 0.1), WithinAbs (-0.09, 1e-9));
+    const double back = 48.0 * ms;
+    double last = m.angleAt (timelineBefore (3.0, back, 0.0, 4.0), bpm, 0.0, 4.0);
+    for (int pass = 0; pass < 2; ++pass)
+        for (double p = pass == 0 ? 3.0 : 0.0; p < (pass == 0 ? 4.0 : 1.0); p += 0.25 * ms)
+        {
+            const double a = m.angleAt (timelineBefore (p, back, 0.0, 4.0), bpm, 0.0, 4.0);
+            REQUIRE (std::abs (wrapDeg (a - last)) < 1.0);
+            last = a;
+        }
+}
+
 TEST_CASE ("Phase map merges loop passes and keeps hand edits", "[map]")
 {
     auto m = fourHits();

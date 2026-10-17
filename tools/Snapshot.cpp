@@ -16,6 +16,8 @@
 //   perhit     the same, PER HIT, aligned, then playing on into bar 2 (map
 //              lane, live turn)
 //   mapempty   PER HIT, nothing learned yet
+//   longmap    PER HIT, a map over 96 bars loaded with a session (ALIGN in
+//              several parts of a song): the lane's grid and bar numbers thin out
 //   export     aligned, one pass recorded and rendered (into <out-dir>)
 //   roundtrip  per hit, aligned, one point edited; saves the session into a
 //              fresh instance and checks the map came back (no image)
@@ -34,6 +36,12 @@ namespace
     // The loop is 145 BPM from sample 0; the processor gets a matching transport.
     TempoPlayHead playHead;
 
+    // PFSNAP_SPLIT=0: a host that runs its blocks straight through the loop's
+    // end, each block reporting only where it starts (as some DAWs do),
+    // instead of ending a block there. hostClock: samples played so far.
+    const bool splitAtLoop = [] { const auto* s = std::getenv ("PFSNAP_SPLIT"); return s == nullptr || juce::String (s).getIntValue() != 0; }();
+    juce::int64 hostClock = 0;
+
     void feed (PhaseFuckerProcessor& p, const testutil::Signal& ref, const testutil::Signal& trk, size_t from, size_t to)
     {
         p.setPlayHead (&playHead);
@@ -41,6 +49,25 @@ namespace
         playHead.playing = true;
         juce::AudioBuffer<float> buf (4, 512);
         juce::MidiBuffer midi;
+        if (! splitAtLoop)   // whole blocks only, on from where the last call ended, round the loop
+        {
+            const auto loop = (juce::int64) ref.size();
+            for (const auto end = hostClock + (juce::int64) (to - from); hostClock < end; hostClock += 512)
+            {
+                for (int i = 0; i < 512; ++i)
+                {
+                    const auto at = (size_t) ((hostClock + i) % loop);
+                    for (int c = 0; c < 2; ++c)
+                    {
+                        buf.setSample (c, i, trk[at]);
+                        buf.setSample (c + 2, i, ref[at]);
+                    }
+                }
+                playHead.position = hostClock % loop;
+                p.processBlock (buf, midi);
+            }
+            return;
+        }
         for (size_t s = from; s < to; s += 512)
         {
             const int n = (int) std::min<size_t> (512, to - s);
@@ -104,7 +131,7 @@ int main (int argc, char** argv)
 
     juce::StringArray states;
     for (int i = 2; i < argc; ++i) states.add (argv[i]);
-    if (states.isEmpty()) states = { "empty", "idle", "listening", "aligned", "offset", "compare", "nosc", "suggest", "perhit", "mapempty", "export" };
+    if (states.isEmpty()) states = { "empty", "idle", "listening", "aligned", "offset", "compare", "nosc", "suggest", "perhit", "mapempty", "longmap", "export" };
 
     const double fs = 48000.0;
     const auto demoKit = kit::load();
@@ -120,6 +147,7 @@ int main (int argc, char** argv)
 
     for (const auto& state : states)
     {
+        hostClock = 0;
         PhaseFuckerProcessor proc;
         if (state == "nosc")
         {
@@ -130,7 +158,7 @@ int main (int argc, char** argv)
         proc.prepareToPlay (fs, 512);
         proc.exportDirectory = outDir;
         playHead.bpm = bpm;
-        playHead.loopQuarters = 16.0;
+        playHead.loopQuarters = (double) src.size() / fs * bpm / 60.0;   // the loop points match the audio loop, as in a DAW
 
         const auto ref = atPeak (state == "offset" ? kick : src);
         const auto trk = atPeak (state == "offset" ? testutil::scaled (lp (150.0, testutil::delayed (kick, 0.0029 * fs)), -1.0)
@@ -154,6 +182,28 @@ int main (int argc, char** argv)
                 feed (proc, kick, bass, 0, (size_t) (1.15 * 240.0 / bpm * fs));   // and on into bar 2
             }
         }
+        else if (state == "longmap")
+        {
+            proc.param (ids::perHit).setValueNotifyingHost (1.f);
+            juce::MemoryBlock data;
+            proc.getStateInformation (data);
+            auto xml = juce::AudioProcessor::getXmlFromBinary (data.getData(), (int) data.getSize());
+            auto* m = xml->createNewChildElement ("Map");
+            for (int beat = 0; beat < 96 * 4; ++beat)   // a hit on every beat, the turn wandering
+            {
+                const double deg = pf::wrapDeg (40.0 * std::sin (beat * 0.37) + (beat / 64) * 50.0);
+                auto* pt = m->createNewChildElement ("Point");
+                pt->setAttribute ("ppq", beat + 0.02);
+                pt->setAttribute ("deg", deg);
+                pt->setAttribute ("learnedDeg", deg);
+                pt->setAttribute ("gainDb", 0.8);
+                pt->setAttribute ("fit", 0.9);
+                pt->setAttribute ("edited", 0);
+            }
+            juce::AudioProcessor::copyXmlToBinary (*xml, data);
+            proc.setStateInformation (data.getData(), (int) data.getSize());
+            feed (proc, kick, bass, 0, kick.size());
+        }
         else if (state == "export")
         {
             feed (proc, ref, trk, 0, src.size());
@@ -161,7 +211,7 @@ int main (int argc, char** argv)
             waitForResult (proc);
             proc.toggleExport();
             feed (proc, ref, trk, 0, src.size());   // the loop comes round: one pass
-            feed (proc, ref, trk, 0, 512);          // and round again: done
+            feed (proc, ref, trk, 0, splitAtLoop ? 512 : src.size());   // and round again: done (run-through blocks: one more pass)
             for (int i = 0; i < 100 && proc.getExportInfo().stage != PhaseFuckerProcessor::ExportStage::ready; ++i)
                 pump (30);
             const auto e = proc.getExportInfo();
@@ -191,7 +241,7 @@ int main (int argc, char** argv)
             feed (proc, kick, bass, 0, kick.size());
             proc.align();
             waitForResult (proc);
-            proc.editMapPoint (2, 123.0);
+            if (proc.getMapSize() > 2) proc.editMapPoint (proc.getMap().points[2].ppq, 123.0);
             juce::MemoryBlock data;
             proc.getStateInformation (data);
             PhaseFuckerProcessor copy;
@@ -207,10 +257,14 @@ int main (int argc, char** argv)
             continue;
         }
 
+        // PFSNAP_SPLIT=0 (above): blocks run through the loop's end.
         // PFSNAP_TRIGGER=0/1/2 (hit/beat/bar), PFSNAP_BARS=bars or PFSNAP_ZOOM=ms: scope settings for the shot.
+        // PFSNAP_PHASE=degrees: the phase knob.
         if (auto* t = std::getenv ("PFSNAP_TRIGGER")) proc.scopeTrigger = (PhaseFuckerProcessor::Trigger) juce::jlimit (0, 2, juce::String (t).getIntValue());
         if (auto* z = std::getenv ("PFSNAP_ZOOM")) { proc.scopeZoomMs = juce::String (z).getFloatValue(); proc.scopeBars = 0.f; }
         if (auto* b = std::getenv ("PFSNAP_BARS")) proc.scopeBars = juce::String (b).getFloatValue();
+        if (auto* ph = std::getenv ("PFSNAP_PHASE"))   // the phase knob (per hit: the offset), degrees
+            proc.param (ids::phase).setValueNotifyingHost (proc.param (ids::phase).convertTo0to1 (juce::String (ph).getFloatValue()));
         std::unique_ptr<PhaseFuckerEditor> editor (dynamic_cast<PhaseFuckerEditor*> (proc.createEditor()));
         pump (100);
         for (int i = 0; i < 4; ++i) editor->tick();

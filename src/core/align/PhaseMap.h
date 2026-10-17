@@ -36,8 +36,10 @@ public:
 
     // Last point at or before ppq, -1 before the first.
     int indexAt (double ppq) const noexcept;
-    // The turn at a timeline position, transitions included.
-    double angleAt (double ppq, double bpm) const noexcept;
+    // The turn at a timeline position, transitions included. With the host
+    // looping [loopStart, loopEnd) the map runs round the loop: after its last
+    // hit comes its first one again, with the same glide as between any two.
+    double angleAt (double ppq, double bpm, double loopStart = 0.0, double loopEnd = 0.0) const noexcept;
 
     // What ALIGN found over the stretch [fromPpq, toPpq] of the timeline. The
     // learned points in that stretch are replaced; points edited by hand stay
@@ -57,5 +59,10 @@ public:
 
 // Wrapped to (-180, 180].
 double wrapDeg (double deg) noexcept;
+
+// The timeline position `quarters` before `ppq` as it was played. With the
+// host looping [loopStart, loopEnd), stepping back past the loop start lands
+// in the previous pass, at the loop's end.
+double timelineBefore (double ppq, double quarters, double loopStart = 0.0, double loopEnd = 0.0) noexcept;
 
 } // namespace pf

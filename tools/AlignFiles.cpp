@@ -41,6 +41,7 @@ namespace
             else if (std::memcmp (d.data() + p, "data", 4) == 0 && channels > 0)
             {
                 const int bytes = bits / 8;
+                if (bytes < 2 || bytes > 4) return false;   // 8-bit and odd sizes aren't read
                 const size_t frames = std::min<size_t> (len, d.size() - body) / (size_t) (bytes * channels);
                 mono.assign (frames, 0.f);
                 for (size_t i = 0; i < frames; ++i)

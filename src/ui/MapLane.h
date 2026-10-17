@@ -40,6 +40,7 @@ private:
     pf::PhaseMap map;
     int seenRevision = -1, liveIndex = -1, hover = -1, dragIndex = -1;
     double fromPpq = 0.0, toPpq = 4.0, barLength = 4.0, beatLength = 1.0, bpm = 120.0;
+    double loopStart = 0.0, loopEnd = 0.0;   // the host's loop, when it loops: the map runs round it
     double playPpq = -1.0;   // what is heard now, -1 while stopped
     float dragY = 0.f;
     double dragDeg = 0.0;

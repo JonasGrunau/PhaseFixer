@@ -69,7 +69,12 @@ void ExportKey::mouseDown (const juce::MouseEvent& e)
     if (! menu) return;
     const auto file = info.file;
     juce::PopupMenu m;
-    m.addItem (juce::String (juce::CharPointer_UTF8 ("Show in Finder")), file.existsAsFile(), false, [file] { file.revealToUser(); });
+   #if JUCE_MAC
+    const juce::String reveal ("Show in Finder");
+   #else
+    const juce::String reveal ("Show in Explorer");
+   #endif
+    m.addItem (reveal, file.existsAsFile(), false, [file] { file.revealToUser(); });
     m.addItem ("Record another pass", info.stage != Stage::rendering, false,
                [safe = juce::Component::SafePointer<ExportKey> (this)] {
                    if (safe == nullptr) return;

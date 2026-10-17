@@ -36,8 +36,10 @@ sidechain). Loop the part, press play, then **ALIGN**: every hit of the
 reference gets its own turn, placed on the DAW's timeline (the *phase map*,
 saved with the session). The turn holds while a hit rings and glides to the
 next one in the second half of the gap (20–250 ms, landing 5 ms before the
-next hit), so a sustained note hardly bends. A hit that would gain less than
-0.3 dB by a turn of its own keeps the one before: no move for nothing.
+next hit), so a sustained note hardly bends. While the DAW loops, the map runs
+round the loop: its last hit glides into its first the same way before the
+loop comes round. A hit that would gain less than 0.3 dB by a turn of its own
+keeps the one before: no move for nothing.
 
 Section B then shows the map: one point per hit at its turn, the turn over time
 as a line, bars numbered as in the DAW. Drag a point up or down to change it
@@ -153,9 +155,11 @@ cmake --build build-core
 
 `build/phasefucker_snapshot_artefacts/Release/phasefucker_snapshot <dir>`
 renders the editor to PNGs (empty, idle, listening, aligned, offset, compare,
-no sidechain, the PER HIT hint, per hit, empty map, export) with the demo's
-scenarios (the `PF_DEMO_KIT` samples if set), no DAW needed; `roundtrip` checks the map survives a
-saved session. `... <dir> bench` times scope and editor paints
+no sidechain, the PER HIT hint, per hit, empty map, a 96-bar map, export) with
+the demo's scenarios (the `PF_DEMO_KIT` samples if set), no DAW needed;
+`PFSNAP_PHASE=<deg>` sets the phase knob first, `PFSNAP_SPLIT=0` plays host
+blocks straight through the loop's end (as some DAWs do). `roundtrip` checks
+the map survives a saved session. `... <dir> bench` times scope and editor paints
 instead.
 
 ### Trying it without a DAW

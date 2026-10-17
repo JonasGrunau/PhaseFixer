@@ -134,7 +134,7 @@ void PhaseFuckerEditor::Sheet::paint (juce::Graphics& g)
             big = degrees (ed.liveShown);
             line = off ? juce::String ("A/B: correction off")
                  : ed.mapPoints == 0 ? juce::String ("no map yet, ALIGN learns one")
-                 : std::abs (c.totalDeg()) > 0.05 ? "map " + juce::String (c.totalDeg() > 0.0 ? "+ " : juce::String (juce::CharPointer_UTF8 ("â ")))
+                 : std::abs (c.totalDeg()) > 0.05 ? "map " + juce::String (c.totalDeg() > 0.0 ? "+ " : juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92 ")))
                                                      + degrees (std::abs (c.totalDeg())).substring (1) + " offset"
                                                    : juce::String ("now, from the map");
         }
@@ -262,14 +262,22 @@ void PhaseFuckerEditor::tick()
         phaseDial.setLabel (perHit ? "Offset" : "Phase");
         sheet.repaint (readoutArea());
     }
+    // The map's numbers, read only when it changed.
+    if (const int revision = proc.getMapRevision(); revision != mapRevision)
+    {
+        mapRevision = revision;
+        const auto map = proc.getMap();
+        mapPoints = map.size();
+        mapGainDb = 0.0;
+        for (const auto& p : map.points) mapGainDb += p.gainDb;
+        if (mapPoints > 0) mapGainDb /= mapPoints;
+        sheet.repaint (readoutArea());
+    }
     if (perHit)
     {
         lane.refresh();
-        const int points = proc.getMap().size();
-        const double live = proc.getLiveTurn();
-        if (points != mapPoints || std::abs (live - liveShown) > 0.05)
+        if (const double live = proc.getLiveTurn(); std::abs (live - liveShown) > 0.05)
         {
-            mapPoints = points;
             liveShown = live;
             sheet.repaint (readoutArea());
         }
@@ -339,12 +347,9 @@ void PhaseFuckerEditor::updateStatus()
     }
     else if (st.hasResult && st.perHit && st.result.status == pf::AlignStatus::ok)
     {
-        const auto map = proc.getMap();
-        double gain = 0.0;
-        for (const auto& p : map.points) gain += p.gainDb;
         s = "Mapped " + juce::String (st.mappedHits) + (st.mappedHits == 1 ? " hit" : " hits");
-        if (map.size() != st.mappedHits) s += " (" + juce::String (map.size()) + " in the map)";
-        if (! map.empty()) s += kDot + "low end " + signedNumber (gain / map.size(), 1) + " dB per hit";
+        if (mapPoints != st.mappedHits) s += " (" + juce::String (mapPoints) + " in the map)";
+        if (mapPoints > 0) s += kDot + "low end " + signedNumber (mapGainDb, 1) + " dB per hit";
         if (std::abs (c.totalDeg()) > 0.05) s += kDot + "offset " + degrees (c.totalDeg());
         const auto pct = juce::String (juce::roundToInt (st.result.hitConfidence * 100.f)) + " %";
         warn = st.result.hitConfidence < 0.5f;

@@ -304,3 +304,52 @@ TEST_CASE ("Capture places what it heard on the host's timeline", "[capture]")
     CHECK (std::isnan (cap.timelineAt (40000)));
     CHECK (std::isnan (cap.timelineAt (60000)));   // not written yet
 }
+
+TEST_CASE ("Capture follows a loop that wraps inside one of its blocks", "[capture]")
+{
+    // The host loops two beats at 120 BPM in blocks of 300 samples; the
+    // wrap at sample 48000 falls 128 samples into a capture block. What
+    // comes after it (a loop's downbeat kick) is at the loop's start, not
+    // past its end, where playback never goes.
+    const double fs = 48000.0, perSample = 2.0 / fs;
+    Capture cap;
+    cap.prepare (fs, 4.0);
+    const auto x = testutil::noise (96000, 0.1, 4);
+    for (int s = 0; s < 96000; s += 300)
+    {
+        cap.setTimeline ((s % 48000) * perSample, perSample);
+        cap.push (x.data() + s, x.data() + s, std::min (300, 96000 - s));
+    }
+    CHECK_THAT (cap.timelineAt (47999), WithinAbs (47999 * perSample, 1e-9));
+    CHECK_THAT (cap.timelineAt (48000), WithinAbs (0.0, 1e-9));
+    CHECK_THAT (cap.timelineAt (48100), WithinAbs (100 * perSample, 1e-9));
+    CHECK_THAT (cap.timelineAt (60000), WithinAbs (12000 * perSample, 1e-9));
+
+    // A host that doesn't split its blocks at the loop's end: blocks of 512
+    // run straight through the wrap, each reporting only where it starts.
+    // Told the loop, the capture works out where it came round.
+    Capture whole;
+    whole.prepare (fs, 4.0);
+    for (int s = 0; s < 96000; s += 512)
+    {
+        whole.setTimeline ((s % 48000) * perSample, perSample, 0.0, 2.0);
+        whole.push (x.data() + s, x.data() + s, std::min (512, 96000 - s));
+    }
+    CHECK_THAT (whole.timelineAt (47999), WithinAbs (47999 * perSample, 1e-9));
+    CHECK_THAT (whole.timelineAt (48000), WithinAbs (0.0, 1e-9));
+    CHECK_THAT (whole.timelineAt (48100), WithinAbs (100 * perSample, 1e-9));
+    CHECK_THAT (whole.timelineAt (60000), WithinAbs (12000 * perSample, 1e-9));
+    CHECK (samplesToLoopEnd (1.99, perSample, 0.0, 2.0) == 240);
+    CHECK (samplesToLoopEnd (2.5, perSample, 0.0, 2.0) == -1);
+    CHECK (samplesToLoopEnd (1.0, perSample, 0.0, 0.0) == -1);
+
+    // Stopping inside a block: unknown from there on.
+    Capture stop;
+    stop.prepare (fs, 4.0);
+    stop.setTimeline (8.0, perSample);
+    stop.push (x.data(), x.data(), 300);
+    stop.setTimeline (std::numeric_limits<double>::quiet_NaN(), perSample);
+    stop.push (x.data() + 300, x.data() + 300, 300);
+    CHECK_THAT (stop.timelineAt (299), WithinAbs (8.0 + 299 * perSample, 1e-9));
+    CHECK (std::isnan (stop.timelineAt (300)));
+}

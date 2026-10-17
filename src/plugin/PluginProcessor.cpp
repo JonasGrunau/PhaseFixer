@@ -33,6 +33,7 @@ PhaseFuckerProcessor::PhaseFuckerProcessor()
 
     capture.prepare (48000.0);
     rotator.prepare (48000.0, 2);
+    mono.setSize (2, 512);   // processBlock chunks by its size: never zero
     setLatencySamples (rotator.latency());
     worker.startThread (juce::Thread::Priority::low);
 }
@@ -108,8 +109,9 @@ void PhaseFuckerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     sidechainActive.store (hasSide, std::memory_order_relaxed);
     if (restartRequested.exchange (false))
         capture.restart();
-    const auto now = readTransport (capture.written());
-    capture.setTimeline (now.valid ? now.ppq : std::numeric_limits<double>::quiet_NaN(), now.bpm / 60.0 / getRate());
+    const auto now = readTransport (capture.written(), n);
+    capture.setTimeline (now.valid ? now.ppq : std::numeric_limits<double>::quiet_NaN(), now.bpm / 60.0 / getRate(),
+                         now.looping ? now.loopStart : 0.0, now.looping ? now.loopEnd : 0.0);
 
     // Mono sums for the capture, in chunks the scratch buffer can hold.
     const int chunk = mono.getNumSamples();
@@ -169,17 +171,19 @@ double PhaseFuckerProcessor::turnFor (const Transport& t, int numSamples) noexce
             {
                 // This block comes out `latency` samples late, and the rotator
                 // takes a glide to get anywhere: aim where it will have arrived.
+                // Just after a loop wraps, that is still the end of the last pass.
                 const double fs = getRate();
-                const double ahead = std::min (numSamples, (int) (pf::Rotator::kFadeMs * 0.001 * fs)) - rotator.latency();
-                const double q = t.ppq + ahead * t.bpm / 60.0 / fs;
-                mapTurn = map.angleAt (q, t.bpm);
+                const double back = rotator.latency() - std::min (numSamples, (int) (pf::Rotator::kFadeMs * 0.001 * fs));
+                const double loopStart = t.looping ? t.loopStart : 0.0, loopEnd = t.looping ? t.loopEnd : 0.0;
+                const double q = pf::timelineBefore (t.ppq, back * t.bpm / 60.0 / fs, loopStart, loopEnd);
+                mapTurn = map.angleAt (q, t.bpm, loopStart, loopEnd);
                 liveMapIndex.store (map.indexAt (q), std::memory_order_relaxed);
             }
         }
     return pf::wrapDeg (mapTurn + knob);
 }
 
-PhaseFuckerProcessor::Transport PhaseFuckerProcessor::readTransport (juce::int64 index) noexcept
+PhaseFuckerProcessor::Transport PhaseFuckerProcessor::readTransport (juce::int64 index, int numSamples) noexcept
 {
     Transport t;
     if (auto* ph = getPlayHead())
@@ -205,12 +209,27 @@ PhaseFuckerProcessor::Transport PhaseFuckerProcessor::readTransport (juce::int64
                 }
             }
 
-    // A jump (loop, locate, restart of the capture) starts a new stretch.
+    // A jump (a locate, a restart of the capture) starts a new stretch. The
+    // loop coming round doesn't: it plays on seamlessly. Hosts wrap it
+    // between two blocks or inside one (reporting only where each block
+    // starts), so where it comes round is worked out from the loop points.
     if (t.valid)
     {
-        const double expected = lastPpq + (double) (index - lastIndex) * lastBpm / 60.0 / getRate();
+        const double rate = t.bpm / 60.0 / getRate();
+        double expected = lastPpq + (double) (index - lastIndex) * lastBpm / 60.0 / getRate();
+        bool wrappedAtStart = false;
+        if (t.looping && lastValid && lastPpq < t.loopEnd && expected >= t.loopEnd - 0.5 * rate)
+        {
+            wrappedAtStart = expected < t.loopEnd + 0.5 * rate;
+            expected -= t.loopEnd - t.loopStart;
+        }
         if (! lastValid || index < lastIndex || std::abs (t.ppq - expected) > 0.01)
             contiguousFrom = index;
+        else if (wrappedAtStart)
+            t.wrapAt = 0;
+        if (t.wrapAt < 0)
+            if (const auto k = pf::samplesToLoopEnd (t.ppq, rate, t.looping ? t.loopStart : 0.0, t.looping ? t.loopEnd : 0.0); k >= 0 && k < numSamples)
+                t.wrapAt = (int) k;
         t.contiguousFrom = contiguousFrom;
         lastPpq = t.ppq;
         lastBpm = t.bpm;
@@ -289,6 +308,9 @@ void PhaseFuckerProcessor::runAlignJob()
             state.stage = state.hasResult ? Stage::done : Stage::idle;
             return;
         }
+        // A pass recorded meanwhile doesn't wait for the listening to end.
+        if (exportStage.load (std::memory_order_acquire) == (int) ExportStage::rendering)
+            renderExport();
         worker.wait (50);
     }
 
@@ -389,15 +411,25 @@ void PhaseFuckerProcessor::learnMap()
         state.mappedHits = (int) hits.size();
     }
     if (hits.empty()) return;
+    // Learned on a copy (it allocates and sorts) and swapped in, so the
+    // audio thread's try-lock hardly ever misses. Only this thread writes it.
+    auto learned = getMap();
+    learned.learn (std::move (hits), from, to, bpm);
     {
         const juce::SpinLock::ScopedLockType l (mapLock);
-        map.learn (std::move (hits), from, to, bpm);
+        std::swap (map, learned);
     }
-    ++mapRevision;
+    mapChanged();
     // The knob is an offset on top of the map now; start it from zero.
     setParam (ids::compare, 0.f);
     setParam (ids::phase, 0.f);
     setParam (ids::invert, 0.f);
+}
+
+void PhaseFuckerProcessor::mapChanged()
+{
+    ++mapRevision;
+    updateHostDisplay (ChangeDetails().withNonParameterStateChanged (true));
 }
 
 pf::PhaseMap PhaseFuckerProcessor::getMap() const
@@ -406,13 +438,21 @@ pf::PhaseMap PhaseFuckerProcessor::getMap() const
     return map;
 }
 
-void PhaseFuckerProcessor::editMapPoint (int index, double deg)
+int PhaseFuckerProcessor::getMapSize() const
+{
+    const juce::SpinLock::ScopedLockType l (mapLock);
+    return map.size();
+}
+
+void PhaseFuckerProcessor::editMapPoint (double ppq, double deg)
 {
     {
         const juce::SpinLock::ScopedLockType l (mapLock);
-        map.edit (index, deg);
+        const int i = map.indexAt (ppq);
+        if (i < 0 || std::abs (map.points[(size_t) i].ppq - ppq) > 1e-6) return;
+        map.edit (i, deg);
     }
-    ++mapRevision;
+    mapChanged();
 }
 
 void PhaseFuckerProcessor::clearMap()
@@ -421,7 +461,7 @@ void PhaseFuckerProcessor::clearMap()
         const juce::SpinLock::ScopedLockType l (mapLock);
         map.points.clear();
     }
-    ++mapRevision;
+    mapChanged();
 }
 
 void PhaseFuckerProcessor::setParam (const char* id, float plainValue)
@@ -467,40 +507,71 @@ void PhaseFuckerProcessor::toggleExport()
 void PhaseFuckerProcessor::recordForExport (const juce::AudioBuffer<float>& in, const Transport& t, double turn) noexcept
 {
     auto stage = exportStage.load (std::memory_order_acquire);
+    int from = 0;   // where in this block the pass starts
+    bool started = false;
     if (stage == (int) ExportStage::armed)
     {
-        // Starts with playback, or when the loop comes round.
-        if (! t.valid || t.contiguousFrom != t.index) return;
-        if (! exportStage.compare_exchange_strong (stage, (int) ExportStage::recording)) return;
-        stage = (int) ExportStage::recording;
+        // Starts where the loop comes round, or with playback (or a locate).
+        if (! t.valid || (t.wrapAt < 0 && t.contiguousFrom != t.index)) return;
+        from = std::max (0, t.wrapAt);
+        const double startPpq = t.wrapAt > 0 ? t.ppq + t.wrapAt * t.bpm / 60.0 / getRate() - (t.loopEnd - t.loopStart) : t.ppq;
+        const double barLength = t.numerator * 4.0 / t.denominator;
+        // What the editor reads while recording is in place before it can see
+        // the stage (the message thread never writes these).
         recLength.store (0, std::memory_order_relaxed);
-        recTurns.clear();
-        recChannels = juce::jmin (in.getNumChannels(), recBuffer.getNumChannels());
-        recStartPpq = t.ppq;
-        recBpm = t.bpm;
-        recBarPpq = t.barPpq;
+        recStartPpq = startPpq;
+        recBarPpq = t.barPpq + std::floor ((startPpq - t.barPpq) / barLength + 1e-9) * barLength;
         recNumerator = t.numerator;
         recDenominator = t.denominator;
-        recLoopEnd = t.looping && t.loopStart <= t.ppq + 1e-3 ? t.loopEnd : -1.0;
+        if (! exportStage.compare_exchange_strong (stage, (int) ExportStage::recording)) return;
+        stage = (int) ExportStage::recording;
+        started = true;
+        recTurns.clear();
+        recChannels = juce::jmin (in.getNumChannels(), recBuffer.getNumChannels());
+        recBpm = t.bpm;
+        recFromLoopStart = t.looping && std::abs (startPpq - t.loopStart) < 1e-3;
+        recLoopEnd = t.looping && t.loopStart <= startPpq + 1e-3 ? t.loopEnd : -1.0;
         recLooped = false;
     }
     if (stage != (int) ExportStage::recording) return;
 
+    // Ends where the loop comes round again (taking what came before the
+    // wrap), at a jump, when playback stops or on request.
     const int length = recLength.load (std::memory_order_relaxed);
-    const bool cameRound = t.valid && t.contiguousFrom == t.index && length > 0;
-    if (! t.valid || cameRound || exportStopRequested.exchange (false) || length >= recBuffer.getNumSamples())
+    int to = in.getNumSamples();
+    bool done = false;
+    if (! started)
     {
-        recLooped = cameRound && std::abs (t.ppq - recStartPpq) < 1e-3;
-        exportStage.store ((int) ExportStage::rendering, std::memory_order_release);
-        return;
+        if (! t.valid || exportStopRequested.exchange (false))
+        {
+            to = from;
+            done = true;
+        }
+        else if (t.contiguousFrom == t.index)   // a jump; back to where it started is a loop pass too
+        {
+            to = from;
+            done = true;
+            recLooped = std::abs (t.ppq - recStartPpq) < 1e-3;
+        }
+        else if (t.wrapAt >= 0)
+        {
+            to = t.wrapAt;
+            done = true;
+            recLooped = recFromLoopStart;
+        }
     }
 
-    if ((recTurns.empty() || ! juce::exactlyEqual (recTurns.back().deg, turn)) && recTurns.size() < recTurns.capacity())
-        recTurns.push_back ({ length, turn });
-    const int n = juce::jmin (in.getNumSamples(), recBuffer.getNumSamples() - length);
-    for (int c = 0; c < recChannels; ++c)
-        recBuffer.copyFrom (c, length, in, c, 0, n);
-    recLength.store (length + n, std::memory_order_release);
+    const int n = juce::jmax (0, juce::jmin (to - from, recBuffer.getNumSamples() - length));
+    if (n > 0)
+    {
+        if ((recTurns.empty() || ! juce::exactlyEqual (recTurns.back().deg, turn)) && recTurns.size() < recTurns.capacity())
+            recTurns.push_back ({ length, turn });
+        for (int c = 0; c < recChannels; ++c)
+            recBuffer.copyFrom (c, length, in, c, from, n);
+        recLength.store (length + n, std::memory_order_release);
+    }
+    if (done || length + n >= recBuffer.getNumSamples())
+        exportStage.store ((int) ExportStage::rendering, std::memory_order_release);
 }
 
 void PhaseFuckerProcessor::renderExport()
@@ -529,18 +600,21 @@ void PhaseFuckerProcessor::renderExport()
                          + theme::fixed (recBpm, juce::exactlyEqual (recBpm, std::round (recBpm)) ? 0 : 2) + " BPM";
         file = dir.getNonexistentChildFile (juce::File::createLegalFileName (title), ".wav", false);
 
-        std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (file);
-        if (! static_cast<juce::FileOutputStream&> (*stream).openedOk())
-            file = juce::File();
-        else if (auto writer = juce::WavAudioFormat().createWriterFor (stream, juce::AudioFormatWriterOptions {}
-                                                                                   .withSampleRate (fs)
-                                                                                   .withNumChannels (recChannels)
-                                                                                   .withBitsPerSample (24)))
+        bool ok = false;
         {
-            if (! writer->writeFromAudioSampleBuffer (out, 0, n)) file = juce::File();
+            std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (file);
+            if (static_cast<juce::FileOutputStream&> (*stream).openedOk())
+                if (auto writer = juce::WavAudioFormat().createWriterFor (stream, juce::AudioFormatWriterOptions {}
+                                                                                      .withSampleRate (fs)
+                                                                                      .withNumChannels (recChannels)
+                                                                                      .withBitsPerSample (24)))
+                    ok = writer->writeFromAudioSampleBuffer (out, 0, n);
         }
-        else
+        if (! ok)   // no half-written file left behind
+        {
+            file.deleteFile();
             file = juce::File();
+        }
     }
 
     {
@@ -610,12 +684,12 @@ void PhaseFuckerProcessor::getStateInformation (juce::MemoryBlock& destData)
         tree.appendChild (res, nullptr);
     }
     {
-        const juce::SpinLock::ScopedLockType l (mapLock);
+        const auto saved = getMap();   // a copy: the tree isn't built under the audio thread's lock
         tree.removeChild (tree.getChildWithName ("Map"), nullptr);
-        if (! map.empty())
+        if (! saved.empty())
         {
             juce::ValueTree m ("Map");
-            for (const auto& p : map.points)
+            for (const auto& p : saved.points)
             {
                 juce::ValueTree pt ("Point");
                 pt.setProperty ("ppq", p.ppq, nullptr);

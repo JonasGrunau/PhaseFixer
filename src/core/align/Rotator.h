@@ -34,6 +34,9 @@ public:
 
     int latency() const noexcept { return lat; }
     static int latencyFor (double sampleRate) noexcept;
+    // How long the output rings on after the input stops, once the host has
+    // compensated the latency: the second half of the Hilbert filter.
+    static int tailFor (double sampleRate) noexcept;
 
     // Audio thread, before process(). `bypass` keeps the latency but turns
     // the correction off (A/B compare).

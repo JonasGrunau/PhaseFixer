@@ -46,7 +46,7 @@ public:
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 0.0; }
+    double getTailLengthSeconds() const override { return pf::Rotator::tailFor (getRate()) / getRate(); }
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
@@ -95,8 +95,11 @@ public:
 
     // ---- Phase map (message thread) -------------------------------------------
     pf::PhaseMap getMap() const;
+    int getMapSize() const;
     int getMapRevision() const noexcept { return mapRevision.load (std::memory_order_relaxed); }
-    void editMapPoint (int index, double deg);
+    // Sets the turn of the point at `ppq` (as getMap() gave it; by position,
+    // so a map ALIGN renewed meanwhile can't send the edit to another point).
+    void editMapPoint (double ppq, double deg);
     void clearMap();
     // What the audio thread plays right now: the total turn (offset and
     // polarity included) and the map point it comes from (-1: none).
@@ -149,9 +152,10 @@ public:
         juce::int64 index = 0;            // capture position of the block's first sample
         double ppq = 0.0, bpm = 120.0, barPpq = 0.0;
         int numerator = 4, denominator = 4;
-        juce::int64 contiguousFrom = 0;   // capture position since which the timeline ran without a jump
+        juce::int64 contiguousFrom = 0;   // capture position since which the timeline ran without a jump (a loop coming round is none)
         bool looping = false;
         double loopStart = 0.0, loopEnd = 0.0;
+        int wrapAt = -1;                  // sample of the block where the loop comes round (0: at its start), -1: none
     };
     Transport getTransport() const
     {
@@ -172,6 +176,7 @@ private:
     void runAlignJob();
     void applyResult (const pf::AlignResult& r);
     void learnMap();
+    void mapChanged();   // by hand or by ALIGN: redraw, and tell the host the session changed
     void setParam (const char* id, float plainValue);
 
     struct Worker : juce::Thread
@@ -194,7 +199,7 @@ private:
     std::atomic<bool> sidechainActive { false };
     std::atomic<float> refPeak { 0.f }, trkPeak { 0.f };
 
-    Transport readTransport (juce::int64 index) noexcept;
+    Transport readTransport (juce::int64 index, int numSamples) noexcept;
     double turnFor (const Transport& t, int numSamples) noexcept;
     void recordForExport (const juce::AudioBuffer<float>& in, const Transport& t, double turn) noexcept;
     void renderExport();
@@ -222,7 +227,7 @@ private:
     int recChannels = 1;
     double recStartPpq = 0.0, recBpm = 120.0, recBarPpq = 0.0, recLoopEnd = -1.0;
     int recNumerator = 4, recDenominator = 4;
-    bool recLooped = false;
+    bool recLooped = false, recFromLoopStart = false;
     juce::File exportFile;                  // guarded by stateLock
     juce::String trackName;                 // guarded by stateLock
 

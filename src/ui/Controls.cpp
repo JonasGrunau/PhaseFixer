@@ -184,6 +184,8 @@ void Dial::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDeta
 
 void Dial::mouseDoubleClick (const juce::MouseEvent&)
 {
+    // Already typing: replacing the editor would close the new one as the old one loses focus.
+    if (entry != nullptr) return;
     entry = std::make_unique<juce::TextEditor>();
     entry->setFont (mono (11.f));
     entry->setJustification (juce::Justification::centred);

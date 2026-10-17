@@ -42,6 +42,11 @@ int Rotator::latencyFor (double sampleRate) noexcept
     return dsp::Hilbert::halfLength (sampleRate) + kBlock;
 }
 
+int Rotator::tailFor (double sampleRate) noexcept
+{
+    return dsp::Hilbert::halfLength (sampleRate);
+}
+
 void Rotator::prepare (double sampleRate, int numChannels)
 {
     fs = sampleRate;
@@ -188,21 +193,24 @@ std::vector<float> hilbertOffline (const float* x, int n, double fs)
     const int N = fft.size();
 
     // Both FFTs in one: x real, h imaginary; then separate the spectra.
+    // Their product is the spectrum of a real signal (bin N - k is the
+    // conjugate of bin k), so it goes back into z pair by pair: one buffer.
     std::vector<dsp::cplx> z ((size_t) N);
     for (int i = 0; i < n; ++i) z[(size_t) i].real (x[i]);
     for (int i = 0; i < (int) h.size(); ++i) z[(size_t) i].imag (h[(size_t) i]);
     fft.forward (z.data());
-    std::vector<dsp::cplx> y ((size_t) N);
-    for (int k = 0; k < N; ++k)
+    for (int k = 0; k <= N / 2; ++k)
     {
-        const auto zk = z[(size_t) k], zn = std::conj (z[(size_t) ((N - k) & (N - 1))]);
-        const auto xs = 0.5 * (zk + zn), hs = dsp::cplx (0.0, -0.5) * (zk - zn);
-        y[(size_t) k] = xs * hs;
+        const auto m = (size_t) ((N - k) & (N - 1));
+        const auto zk = z[(size_t) k], zn = std::conj (z[m]);
+        const auto y = (0.5 * (zk + zn)) * (dsp::cplx (0.0, -0.5) * (zk - zn));
+        z[(size_t) k] = y;
+        z[m] = std::conj (y);
     }
-    fft.inverse (y.data());
+    fft.inverse (z.data());
 
     std::vector<float> out ((size_t) n);
-    for (int i = 0; i < n; ++i) out[(size_t) i] = (float) y[(size_t) (i + c)].real();
+    for (int i = 0; i < n; ++i) out[(size_t) i] = (float) z[(size_t) (i + c)].real();
     return out;
 }
 

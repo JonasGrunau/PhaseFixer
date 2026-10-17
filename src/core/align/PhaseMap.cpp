@@ -14,6 +14,14 @@ double wrapDeg (double deg) noexcept
     return deg <= -180.0 ? deg + 360.0 : deg;
 }
 
+double timelineBefore (double ppq, double quarters, double loopStart, double loopEnd) noexcept
+{
+    const double q = ppq - quarters, len = loopEnd - loopStart;
+    if (len <= 0.0 || ppq < loopStart || ppq >= loopEnd || q >= loopStart) return q;
+    const double into = std::fmod (q - loopStart, len);   // (-len, 0]
+    return loopStart + (into < 0.0 ? into + len : into);
+}
+
 int PhaseMap::indexAt (double ppq) const noexcept
 {
     const auto it = std::upper_bound (points.begin(), points.end(), ppq + 1e-9,
@@ -21,24 +29,50 @@ int PhaseMap::indexAt (double ppq) const noexcept
     return (int) (it - points.begin()) - 1;
 }
 
-double PhaseMap::angleAt (double ppq, double bpm) const noexcept
+namespace
+{
+    // From turn a (hit at aPpq) to turn b (hit at bPpq): hold, then the
+    // raised-cosine glide in the second half of the gap.
+    double glide (double ppq, double aPpq, double aDeg, double bPpq, double bDeg, double bpm) noexcept
+    {
+        const double msPerPpq = 60000.0 / std::max (bpm, 1.0);
+        const double gapMs = (bPpq - aPpq) * msPerPpq;
+        const double glideMs = std::clamp (0.5 * gapMs, PhaseMap::kMinGlideMs, PhaseMap::kMaxGlideMs);
+        const double land = bPpq - PhaseMap::kLandMs / msPerPpq, start = land - glideMs / msPerPpq;
+        if (ppq <= start) return aDeg;
+        if (ppq >= land) return bDeg;
+        const double t = (ppq - start) / (land - start);
+        const double f = 0.5 - 0.5 * std::cos (std::numbers::pi * t);
+        return wrapDeg (aDeg + wrapDeg (bDeg - aDeg) * f);
+    }
+} // namespace
+
+double PhaseMap::angleAt (double ppq, double bpm, double loopStart, double loopEnd) const noexcept
 {
     if (points.empty()) return 0.0;
     const int i = indexAt (ppq);
+
+    if (loopEnd > loopStart && ppq >= loopStart && ppq < loopEnd)
+    {
+        const auto before = [] (const MapPoint& m, double p) { return m.ppq < p; };
+        const int first = (int) (std::lower_bound (points.begin(), points.end(), loopStart, before) - points.begin());
+        const int end = (int) (std::lower_bound (points.begin(), points.end(), loopEnd, before) - points.begin());
+        if (first < end)   // hits inside the loop: the one before comes from the last pass, the next from the next pass
+        {
+            const double len = loopEnd - loopStart;
+            const auto& a = points[(size_t) (i >= first ? i : end - 1)];
+            const auto& b = points[(size_t) (i >= first && i + 1 < end ? i + 1 : first)];
+            const double aPpq = i >= first ? a.ppq : a.ppq - len;
+            const double bPpq = i >= first && i + 1 < end ? b.ppq : b.ppq + (i >= first ? len : 0.0);
+            return glide (ppq, aPpq, a.deg, bPpq, b.deg, bpm);
+        }
+    }
+
     if (i < 0) return points.front().deg;
     if (i + 1 >= (int) points.size()) return points.back().deg;
-
     const auto& a = points[(size_t) i];
     const auto& b = points[(size_t) i + 1];
-    const double msPerPpq = 60000.0 / std::max (bpm, 1.0);
-    const double gapMs = (b.ppq - a.ppq) * msPerPpq;
-    const double glideMs = std::clamp (0.5 * gapMs, kMinGlideMs, kMaxGlideMs);
-    const double land = b.ppq - kLandMs / msPerPpq, start = land - glideMs / msPerPpq;
-    if (ppq <= start) return a.deg;
-    if (ppq >= land) return b.deg;
-    const double t = (ppq - start) / (land - start);
-    const double f = 0.5 - 0.5 * std::cos (std::numbers::pi * t);
-    return wrapDeg (a.deg + wrapDeg (b.deg - a.deg) * f);
+    return glide (ppq, a.ppq, a.deg, b.ppq, b.deg, bpm);
 }
 
 void PhaseMap::learn (std::vector<Hit> hits, double fromPpq, double toPpq, double bpm)

@@ -10,7 +10,7 @@ if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
 endif()
 
 # Release builds pass the tag's version, e.g. -DPHASEFUCKER_VERSION=1.2.0.
-set(PHASEFUCKER_VERSION "0.3.1" CACHE STRING "Plugin version, MAJOR.MINOR.PATCH")
+set(PHASEFUCKER_VERSION "0.3.2" CACHE STRING "Plugin version, MAJOR.MINOR.PATCH")
 project(PhaseFucker VERSION ${PHASEFUCKER_VERSION} LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -97,8 +97,7 @@ if(PHASEFUCKER_BUILD_PLUGIN)
     target_compile_definitions(PhaseFucker PUBLIC
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
-        JUCE_VST3_CAN_REPLACE_VST2=0
-        JUCE_DISPLAY_SPLASH_SCREEN=0)
+        JUCE_VST3_CAN_REPLACE_VST2=0)
 
     target_link_libraries(PhaseFucker
         PRIVATE
@@ -118,7 +117,7 @@ if(PHASEFUCKER_BUILD_PLUGIN)
         JucePlugin_Name="PhaseFucker"
         JucePlugin_VersionString="${PROJECT_VERSION}"
         JUCE_MODAL_LOOPS_PERMITTED=1
-        JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_DISPLAY_SPLASH_SCREEN=0)
+        JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
     target_link_libraries(phasefucker_snapshot PRIVATE
         phasefucker_core phasefucker_assets juce::juce_audio_utils
         juce::juce_recommended_config_flags)
@@ -131,7 +130,7 @@ if(PHASEFUCKER_BUILD_PLUGIN)
     target_compile_definitions(phasefucker_demo PRIVATE
         JucePlugin_Name="PhaseFucker"
         JucePlugin_VersionString="${PROJECT_VERSION}"
-        JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_DISPLAY_SPLASH_SCREEN=0)
+        JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
     target_link_libraries(phasefucker_demo PRIVATE
         phasefucker_core phasefucker_assets juce::juce_audio_utils
         juce::juce_recommended_config_flags)

@@ -214,9 +214,8 @@ void Scope::refresh()
                     const double boundaryPpq = origin + std::floor ((p - origin) / unit) * unit;
                     const auto boundary = done - (juce::int64) std::llround ((p - boundaryPpq) / perSample);
                     // The same stretch of timeline all the way (no jump in
-                    // between), and new. Checked a little after the boundary:
-                    // a loop wraps anywhere inside a capture block, and that
-                    // block still carries the old pass's position.
+                    // between), and new. Checked a little after the boundary,
+                    // where the timeline must have run on from it.
                     const int past = 2 * pf::Capture::kBlock;
                     const double pb = cap.timelineAt (boundary + past);
                     if (std::isfinite (pb) && std::abs (pb - (boundaryPpq + past * perSample)) < 0.02 && std::abs (boundary - grabbed) > 64)
@@ -241,9 +240,9 @@ void Scope::refresh()
 
 double Scope::ppqAt (double index) const
 {
+    if (grabPpq.size() < 2) return std::numeric_limits<double>::quiet_NaN();
     const double b = index / pf::Capture::kBlock;
     const auto i = (size_t) std::clamp ((int) std::floor (b), 0, (int) grabPpq.size() - 2);
-    if (grabPpq.size() < 2) return std::numeric_limits<double>::quiet_NaN();
     return grabPpq[i] + (grabPpq[i + 1] - grabPpq[i]) * (b - (double) i);   // NaN stays NaN
 }
 
@@ -279,15 +278,18 @@ void Scope::recompute()
     else
     {
         // The map's turn along the timeline (where it's known; elsewhere
-        // what was playing at the grab), plus the knob's offset.
-        const double bpm = proc.getTransport().bpm, knob = c.totalDeg();
+        // what was playing at the grab), plus the knob's offset; round the
+        // loop when the host loops, as the audio thread plays it.
+        const auto t = proc.getTransport();
+        const double bpm = t.bpm, knob = c.totalDeg();
+        const double loopStart = t.looping ? t.loopStart : 0.0, loopEnd = t.looping ? t.loopEnd : 0.0;
         const int n = (int) raw.size();
         constexpr int chunk = 16;
         for (int i = 0; i < n; i += chunk)
         {
             const double ppq = ppqAt (i + 0.5 * chunk);
             pf::Correction turn;
-            turn.phaseDeg = std::isfinite (ppq) ? pf::wrapDeg (map.angleAt (ppq, bpm) + knob) : grabLiveTurn;
+            turn.phaseDeg = std::isfinite (ppq) ? pf::wrapDeg (map.angleAt (ppq, bpm, loopStart, loopEnd) + knob) : grabLiveTurn;
             pf::rotateOffline (raw.data() + i, hil.data() + i, std::min (chunk, n - i), turn, fixed.data() + i);
         }
     }

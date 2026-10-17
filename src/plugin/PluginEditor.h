@@ -68,8 +68,8 @@ private:
 
     juce::String status, statusRight, anchorKey;
     bool statusWarn = false, perHitShown = false;
-    double liveShown = 0.0;
-    int mapPoints = 0;
+    double liveShown = 0.0, mapGainDb = 0.0;
+    int mapPoints = 0, mapRevision = -1;
     juce::uint32 seenResult = 0;
     int ticks = 0, refQuietTicks = 0;
 };

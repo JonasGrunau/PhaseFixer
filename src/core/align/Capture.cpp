@@ -20,6 +20,12 @@ namespace
     }
 } // namespace
 
+int64_t samplesToLoopEnd (double ppq, double ppqPerSample, double loopStart, double loopEnd) noexcept
+{
+    if (! (loopEnd > loopStart) || ! (ppqPerSample > 0.0) || ! (ppq >= loopStart && ppq < loopEnd)) return -1;
+    return std::max<int64_t> (1, (int64_t) std::ceil ((loopEnd - ppq) / ppqPerSample - 1e-6));
+}
+
 void Capture::prepare (double sampleRate, double seconds)
 {
     fs = sampleRate;
@@ -33,6 +39,8 @@ void Capture::prepare (double sampleRate, double seconds)
     trkBlock.reset (new std::atomic<float>[(size_t) blocks]);
     blockPpq.reset (new std::atomic<double>[(size_t) blocks]);
     blockRate.reset (new std::atomic<double>[(size_t) blocks]);
+    blockJumpPpq.reset (new std::atomic<double>[(size_t) blocks]);
+    blockJumpAt.reset (new std::atomic<int>[(size_t) blocks]);
     reset();
 }
 
@@ -49,6 +57,8 @@ void Capture::reset() noexcept
         trkBlock[(size_t) i].store (0.f, std::memory_order_relaxed);
         blockPpq[(size_t) i].store (kUnknown, std::memory_order_relaxed);
         blockRate[(size_t) i].store (0.0, std::memory_order_relaxed);
+        blockJumpPpq[(size_t) i].store (kUnknown, std::memory_order_relaxed);
+        blockJumpAt[(size_t) i].store (-1, std::memory_order_relaxed);
     }
     restart();
 }
@@ -60,14 +70,32 @@ void Capture::restart() noexcept
     tlPpq = accPpq = kUnknown;
     tlRate = 0.0;
     tlIndex = 0;
+    wrapIndex = -1;
+    accJumpAt = -1;
     count.store (0, std::memory_order_release);
 }
 
-void Capture::setTimeline (double ppqOfNext, double ppqPerSample) noexcept
+void Capture::setTimeline (double ppqOfNext, double ppqPerSample, double loopStart, double loopEnd) noexcept
 {
+    // Inside a block: a jump (or the transport starting or stopping) is
+    // noted there, so what follows it isn't placed by the block's start.
+    if (accN > 0)
+    {
+        const double expected = tlPpq + (double) (count.load (std::memory_order_relaxed) - tlIndex) * tlRate;
+        const bool jump = std::isnan (expected) != std::isnan (ppqOfNext)
+                       || (! std::isnan (ppqOfNext) && std::abs (ppqOfNext - expected) > 1e-3);
+        if (jump)
+        {
+            accJumpAt = accN;
+            accJumpPpq = ppqOfNext;
+        }
+    }
     tlPpq = ppqOfNext;
     tlRate = ppqPerSample;
     tlIndex = count.load (std::memory_order_relaxed);
+    const auto toEnd = samplesToLoopEnd (ppqOfNext, ppqPerSample, loopStart, loopEnd);   // false for NaN
+    wrapIndex = toEnd < 0 ? -1 : tlIndex + toEnd;
+    loopLength = loopEnd - loopStart;
 }
 
 void Capture::push (const float* r, const float* t, int n) noexcept
@@ -77,6 +105,17 @@ void Capture::push (const float* r, const float* t, int n) noexcept
     for (int i = 0; i < n; ++i, ++pos)
     {
         const float a = r != nullptr ? r[i] : 0.f, b = t[i];
+        if (pos == wrapIndex)   // the loop comes round inside the host's block
+        {
+            tlPpq += (double) (pos - tlIndex) * tlRate - loopLength;
+            tlIndex = pos;
+            wrapIndex = -1;
+            if (accN > 0)
+            {
+                accJumpAt = accN;
+                accJumpPpq = tlPpq;
+            }
+        }
         if (accN == 0)
             accPpq = tlPpq + (double) (pos - tlIndex) * tlRate;   // NaN stays NaN
         ref[(size_t) (pos & mask)].store (a, std::memory_order_relaxed);
@@ -90,8 +129,11 @@ void Capture::push (const float* r, const float* t, int n) noexcept
             trkBlock[(size_t) (block & blockMask)].store ((float) (accTrk / kBlock), std::memory_order_relaxed);
             blockPpq[(size_t) (block & blockMask)].store (accPpq, std::memory_order_relaxed);
             blockRate[(size_t) (block & blockMask)].store (tlRate, std::memory_order_relaxed);
+            blockJumpPpq[(size_t) (block & blockMask)].store (accJumpPpq, std::memory_order_relaxed);
+            blockJumpAt[(size_t) (block & blockMask)].store (accJumpAt, std::memory_order_relaxed);
             accRef = accTrk = 0.0;
             accN = 0;
+            accJumpAt = -1;
         }
         // Publish every block, so readers see the samples and energies together.
         if (accN == 0)
@@ -119,8 +161,12 @@ double Capture::timelineAt (int64_t index) const noexcept
     const int64_t block = index / kBlock;
     if (index < 0 || block >= blocksWritten() || block < blocksWritten() - blocks + kSafety / kBlock)
         return kUnknown;
-    const double p = blockPpq[(size_t) (block & blockMask)].load (std::memory_order_relaxed);
-    return p + (double) (index - block * kBlock) * blockRate[(size_t) (block & blockMask)].load (std::memory_order_relaxed);
+    const auto b = (size_t) (block & blockMask);
+    const int into = (int) (index - block * kBlock), jump = blockJumpAt[b].load (std::memory_order_relaxed);
+    const double rate = blockRate[b].load (std::memory_order_relaxed);
+    if (jump >= 0 && into >= jump)
+        return blockJumpPpq[b].load (std::memory_order_relaxed) + (double) (into - jump) * rate;
+    return blockPpq[b].load (std::memory_order_relaxed) + (double) into * rate;
 }
 
 float Capture::blockEnergy (int64_t block, bool reference) const noexcept
