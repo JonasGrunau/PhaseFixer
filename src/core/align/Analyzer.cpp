@@ -1,7 +1,9 @@
 #include "Analyzer.h"
 
 #include "CrossSpectrum.h"
+#include "Rotator.h"
 #include "dsp/Fft.h"
+#include "dsp/Hilbert.h"
 
 #include <algorithm>
 #include <array>
@@ -330,6 +332,290 @@ namespace
         }
     }
 
+    // ---- Hits -------------------------------------------------------------------
+
+    // RBJ low or high pass, double precision.
+    struct Biquad
+    {
+        double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
+
+        static Biquad make (bool high, double hz, double q, double fs)
+        {
+            const double w = 2.0 * kPi * hz / fs, al = std::sin (w) / (2.0 * q), c = std::cos (w), a0 = 1.0 + al;
+            Biquad f;
+            f.b0 = f.b2 = (high ? 1.0 + c : 1.0 - c) / 2.0 / a0;
+            f.b1 = (high ? -(1.0 + c) : 1.0 - c) / a0;
+            f.a1 = -2.0 * c / a0;
+            f.a2 = (1.0 - al) / a0;
+            return f;
+        }
+
+        void run (float* x, int n, bool backwards) const noexcept
+        {
+            double x1 = 0.0, x2 = 0.0, y1 = 0.0, y2 = 0.0;
+            for (int k = 0; k < n; ++k)
+            {
+                float& v = x[backwards ? n - 1 - k : k];
+                const double y = b0 * v + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+                x2 = x1; x1 = v;
+                y2 = y1; y1 = y;
+                v = (float) y;
+            }
+        }
+    };
+    using Chain = std::vector<Biquad>;
+
+    // Forward and backward: no phase shift, every band keeps the hits' timing.
+    std::vector<float> zeroPhase (const float* x, int n, const Chain& chain)
+    {
+        std::vector<float> y (x, x + n);
+        for (const auto& f : chain) f.run (y.data(), n, false);
+        for (const auto& f : chain) f.run (y.data(), n, true);
+        return y;
+    }
+
+    // Onsets of the reference below ~400 Hz: where its low band jumps 8 dB
+    // over the 40 ms before, no closer together than 80 ms.
+    std::vector<int> lowOnsets (const float* ref, int n, double fs)
+    {
+        std::vector<float> low (ref, ref + n);
+        Biquad::make (false, 400.0, 0.707, fs).run (low.data(), n, false);
+        const int hb = std::max (32, (int) std::lround (0.0025 * fs));
+        const int nb = n / hb, hist = std::max (4, (int) std::lround (0.04 * fs / hb)), gap = (int) std::lround (0.08 * fs / hb);
+        std::vector<double> e ((size_t) nb);
+        double peak = 0.0;
+        for (int b = 0; b < nb; ++b)
+            peak = std::max (peak, e[(size_t) b] = meanSquare (low.data() + b * hb, hb));
+
+        std::vector<int> out;
+        int last = -gap;
+        double before = 0.0;   // sum of the `hist` blocks before b
+        for (int b = 0; b < nb; ++b)
+        {
+            const double v = e[(size_t) b];
+            if (b >= hist && b - last >= gap && v > peak * 3e-4 && v > 0.1 * kActive && v > 6.3 * before / hist)
+            {
+                out.push_back (b * hb);
+                last = b;
+            }
+            before += v;
+            if (b >= hist) before -= e[(size_t) (b - hist)];
+        }
+        return out;
+    }
+
+    // The turn (radians) where score(t) peaks: 1 degree grid, then a parabola.
+    template <typename Score>
+    double bestTurn (const Score& score)
+    {
+        constexpr int steps = 360;
+        std::array<double, steps> y {};
+        int best = 0;
+        for (int i = 0; i < steps; ++i)
+        {
+            y[(size_t) i] = score (2.0 * kPi * i / steps - kPi);
+            if (y[(size_t) i] > y[(size_t) best]) best = i;
+        }
+        const double d = parabola (y[(size_t) ((best + steps - 1) % steps)], y[(size_t) best], y[(size_t) ((best + 1) % steps)]);
+        return std::remainder ((best + d) * 2.0 * kPi / steps - kPi, 2.0 * kPi);
+    }
+
+    // One ~10 ms piece of a hit through one band, as analytic signals:
+    // A = reference, B = track (B's imaginary part is the Hilbert filter the
+    // rotator plays with). With the track turned by t, the envelope energy of
+    // the sum is pa + pb + 2 Re (z e^{jt}). Envelopes, so a slow wave crossing
+    // zero inside the piece doesn't count against it.
+    struct Piece
+    {
+        double pa = 0.0, pb = 0.0, w = 0.0;   // w: how much the two play together here
+        cplx z;
+
+        double energy (cplx turn) const noexcept { return pa + pb + 2.0 * (z * turn).real(); }
+    };
+
+    // What is listened to per hit: the low end first (weight), then 150-500 Hz
+    // on the attack (punch), and a little of 500 Hz-2 kHz.
+    enum Band { weight, punch, tone, numBands };
+    constexpr double kBandWeight[numBands] = { 1.0, 0.5, 0.2 };
+
+    struct BandPieces
+    {
+        std::vector<Piece> pieces;
+        double mass = 0.0, share = 0.0;
+
+        // The sum's average level (dB) where the two play together. A piece
+        // that cancels completely counts as -40 dB, not minus infinity.
+        double score (cplx turn) const noexcept
+        {
+            double acc = 0.0;
+            for (const auto& p : pieces)
+                if (p.w > 0.0)
+                    acc += p.w * 10.0 * std::log10 (std::max (p.energy (turn), 1e-4 * (p.pa + p.pb)) + 1e-30);
+            return mass > 0.0 ? acc / mass : 0.0;
+        }
+        // How steadily the two keep one phase relation, piece to piece:
+        // |pull| / pullLimit is 1 when it never changes.
+        cplx pull() const noexcept
+        {
+            cplx acc {};
+            for (const auto& p : pieces) acc += p.w * p.z / (p.pa + p.pb + 1e-30);
+            return acc;
+        }
+        double pullLimit() const noexcept
+        {
+            double acc = 0.0;
+            for (const auto& p : pieces) acc += p.w * std::abs (p.z) / (p.pa + p.pb + 1e-30);
+            return acc;
+        }
+    };
+
+    // One hit in its bands. The score is each band's average level of the
+    // sum in dB, weighted: a kick and the bass note after it mostly don't
+    // overlap, and judged in pieces, only where they meet decides; in dB, a
+    // loud band can't drown a quiet one.
+    struct HitBands
+    {
+        std::array<BandPieces, numBands> band {};
+
+        void prepare() noexcept
+        {
+            std::array<double, numBands> mean {};
+            double loudest = 0.0;
+            for (int i = 0; i < numBands; ++i)
+            {
+                const auto& b = band[(size_t) i];
+                mean[(size_t) i] = b.pieces.empty() ? 0.0 : b.mass / (double) b.pieces.size();
+                loudest = std::max (loudest, mean[(size_t) i]);
+            }
+            for (int i = 0; i < numBands; ++i)   // a band with little in it fades out
+                band[(size_t) i].share = kBandWeight[i] * mean[(size_t) i] / (mean[(size_t) i] + 0.05 * loudest + 1e-30);
+        }
+        double score (double t) const noexcept
+        {
+            const auto turn = std::polar (1.0, t);
+            double acc = 0.0, shares = 0.0;
+            for (const auto& b : band)
+                if (b.share > 0.0)
+                {
+                    acc += b.share * b.score (turn);
+                    shares += b.share;
+                }
+            return shares > 0.0 ? acc / shares : 0.0;
+        }
+        cplx pull() const noexcept
+        {
+            cplx acc {};
+            for (const auto& b : band) acc += b.share * b.pull();
+            return acc;
+        }
+        double pullLimit() const noexcept
+        {
+            double acc = 0.0;
+            for (const auto& b : band) acc += b.share * b.pullLimit();
+            return acc;
+        }
+        // How much this hit counts in the common turn: how long and how loud
+        // the two play together in it.
+        double mass() const noexcept
+        {
+            double acc = 0.0;
+            for (const auto& b : band) acc += b.share * b.mass;
+            return acc;
+        }
+    };
+
+    struct HitAnalysis
+    {
+        std::vector<HitAngle> hits;
+        std::vector<HitBands> bands;   // per hit
+    };
+
+    HitAnalysis analyseHits (const float* ref, const float* trk, int n, double fs, float trackPeak)
+    {
+        HitAnalysis out;
+        const auto onsets = lowOnsets (ref, n, fs);
+
+        // From just before each hit to just before the next (at most 0.6 s),
+        // and the attack, its first 45 ms. Clear of the ends, where the
+        // offline Hilbert sees zeros.
+        struct Window { int onset, from, bodyTo, attackTo; };
+        const int edge = dsp::Hilbert::halfLength (fs) + 16;
+        const int pre = (int) std::lround (0.005 * fs), attack = (int) std::lround (0.045 * fs);
+        const int maxBody = (int) std::lround (0.6 * fs), minBody = (int) std::lround (0.03 * fs);
+        std::vector<Window> plan;
+        for (size_t i = 0; i < onsets.size(); ++i)
+        {
+            Window w;
+            w.onset = onsets[i];
+            w.from = w.onset - pre;
+            w.bodyTo = std::min ({ i + 1 < onsets.size() ? onsets[i + 1] - pre : n, w.onset + maxBody, n - edge });
+            w.attackTo = std::min (w.onset + attack, w.bodyTo);
+            if (w.from < edge || w.bodyTo - w.from < minBody) continue;
+            const double et = meanSquare (trk + w.from, w.bodyTo - w.from);
+            if (et < kActive || et < trackPeak * 1e-4) continue;
+            plan.push_back (w);
+        }
+        if (plan.empty()) return out;
+
+        // Through the filter the plugin plays with, so a turn here is the
+        // turn heard there.
+        const auto hilRef = hilbertOffline (ref, n, fs), hilTrk = hilbertOffline (trk, n, fs);
+
+        const Chain chains[numBands] = {
+            { Biquad::make (true, 25.0, 0.707, fs), Biquad::make (false, 150.0, 0.541, fs), Biquad::make (false, 150.0, 1.307, fs) },
+            { Biquad::make (true, 150.0, 0.707, fs), Biquad::make (false, 500.0, 0.707, fs) },
+            { Biquad::make (true, 500.0, 0.707, fs), Biquad::make (false, 2000.0, 0.707, fs) },
+        };
+        const int piece = std::max (16, (int) std::lround (0.01 * fs));
+        std::vector<HitBands> per (plan.size());
+        for (int band = 0; band < numBands; ++band)
+        {
+            const auto& chain = chains[band];
+            const auto a = zeroPhase (ref, n, chain), ah = zeroPhase (hilRef.data(), n, chain);
+            const auto b = zeroPhase (trk, n, chain), bh = zeroPhase (hilTrk.data(), n, chain);
+            for (size_t i = 0; i < plan.size(); ++i)
+            {
+                const auto& w = plan[i];
+                auto& bp = per[i].band[(size_t) band];
+                const int to = band == punch ? w.attackTo : w.bodyTo;
+                for (int s = w.from; s + piece / 2 <= to; s += piece)
+                {
+                    Piece p;
+                    double zr = 0.0, zi = 0.0;
+                    for (int k = s; k < std::min (s + piece, to); ++k)
+                    {
+                        const double x = a[(size_t) k], xh = ah[(size_t) k], y = b[(size_t) k], yh = bh[(size_t) k];
+                        p.pa += x * x + xh * xh;
+                        p.pb += y * y + yh * yh;
+                        zr += x * y + xh * yh;   // conj (x + j xh) (y + j yh)
+                        zi += x * yh - xh * y;
+                    }
+                    p.z = { zr, zi };
+                    p.w = std::sqrt (std::sqrt (p.pa * p.pb));
+                    bp.mass += p.w;
+                    bp.pieces.push_back (p);
+                }
+            }
+        }
+
+        for (size_t i = 0; i < plan.size(); ++i)
+        {
+            auto& hb = per[i];
+            hb.prepare();
+            if (hb.mass() <= 1e-12) continue;
+            const double t = bestTurn ([&] (double x) { return hb.score (x); });
+            const auto& low = hb.band[weight];
+            HitAngle hit;
+            hit.sample = plan[i].onset;
+            hit.totalDeg = t * 180.0 / kPi;
+            hit.fit = (float) std::clamp (std::abs (hb.pull()) / (hb.pullLimit() + 1e-30), 0.0, 1.0);
+            hit.gainDb = (float) (low.share > 0.0 ? low.score (std::polar (1.0, t)) - low.score ({ 1.0, 0.0 }) : 0.0);
+            out.hits.push_back (hit);
+            out.bands.push_back (hb);
+        }
+        return out;
+    }
+
 } // namespace
 
 AlignResult analyze (const float* ref, const float* trk, int n, const AnalyzerSettings& st)
@@ -400,10 +686,9 @@ AlignResult analyze (const float* ref, const float* trk, int n, const AnalyzerSe
     cohMean = cohWeight > 0.0 ? cohMean / cohWeight : 0.0;
     res.coherence = (float) cohMean;
 
-    const double turnDeg = std::abs (z) > 0.0 ? -std::arg (z) * 180.0 / kPi : 0.0;
-    res.correction = Correction::fromTotal (turnDeg);
+    double turnDeg = std::abs (z) > 0.0 ? -std::arg (z) * 180.0 / kPi : 0.0;
     // ~1 when one angle lines the shared part up everywhere that counts.
-    const double fit = norm > 0.0 ? std::abs (z) / norm : 0.0;
+    double fit = norm > 0.0 ? std::abs (z) / norm : 0.0;
 
     // Do ~1 s stretches land on the same angle on their own?
     double agreement = 0.7;
@@ -423,7 +708,75 @@ AlignResult analyze (const float* ref, const float* trk, int n, const AnalyzerSe
         if (total > 0.0) agreement = std::abs (unit) / total;
     }
 
-    res.lowEndGainDb = (float) spec.sumGainDb (res.correction, 20.0, 300.0);
+    // Material with hits: judged hit by hit on what is heard (see above).
+    // hitFit is how steadily each hit keeps its own phase relation; unlike
+    // the coherence it stays high when the turn changes from hit to hit.
+    double hitFit = -1.0, hitLowGainDb = 0.0;
+    if (auto h = analyseHits (ref, trk, n, fs, in.envTrk.peak()); h.hits.size() >= 2)
+    {
+        // Each hit counts by how long and how loud the two play together in it.
+        const size_t count = h.hits.size();
+        std::vector<double> mass (count);
+        double massSum = 0.0;
+        for (size_t i = 0; i < count; ++i) massSum += mass[i] = h.bands[i].mass();
+        const double t = bestTurn ([&] (double x) {
+            double acc = 0.0;
+            for (size_t i = 0; i < count; ++i) acc += mass[i] * h.bands[i].score (x);
+            return acc / massSum;
+        });
+        turnDeg = t * 180.0 / kPi;
+
+        cplx pulled {}, unit {};
+        double limit = 0.0, fits = 0.0, total = 0.0;
+        for (size_t i = 0; i < count; ++i)
+        {
+            pulled += h.bands[i].pull();
+            limit += h.bands[i].pullLimit();
+            fits += mass[i] * h.hits[i].fit;
+            const double w = std::sqrt (mass[i] * h.hits[i].fit);
+            unit += w * std::polar (1.0, h.hits[i].totalDeg * kPi / 180.0);
+            total += w;
+        }
+        fit = limit > 0.0 ? std::min (1.0, std::abs (pulled) / limit) : 0.0;
+        hitFit = massSum > 0.0 ? fits / massSum : 0.0;
+
+        // What the common turn adds to the low end where the two play
+        // together (for a kick and its bass, where they meet).
+        double lowMass = 0.0;
+        for (size_t i = 0; i < count; ++i)
+            if (const auto& low = h.bands[i].band[Band::weight]; low.share > 0.0)
+            {
+                hitLowGainDb += mass[i] * (low.score (std::polar (1.0, t)) - low.score ({ 1.0, 0.0 }));
+                lowMass += mass[i];
+            }
+        hitLowGainDb = lowMass > 0.0 ? hitLowGainDb / lowMass : 0.0;
+        agreement = total > 0.0 ? std::abs (unit) / total : 0.0;
+        res.hitAgreement = (float) agreement;
+
+        // From hit to hit the turn holds unless the next hit gains something
+        // audible (0.3 dB where the two meet) by a turn of its own: a move
+        // under a sustained note is never free. A hit with nothing steady to
+        // go by holds too. The first one starts from the common turn.
+        double hold = turnDeg;
+        for (size_t i = 0; i < count; ++i)
+        {
+            auto& hit = h.hits[i];
+            const auto& hb = h.bands[i];
+            const double better = hb.score (hit.totalDeg * kPi / 180.0) - hb.score (hold * kPi / 180.0);
+            if (hit.fit < 0.3f || better < 0.3)
+                hit.totalDeg = hold;
+            hold = hit.totalDeg;
+            const auto& low = hb.band[Band::weight];
+            hit.gainDb = (float) (low.share > 0.0 ? low.score (std::polar (1.0, hold * kPi / 180.0)) - low.score ({ 1.0, 0.0 }) : 0.0);
+        }
+        res.hits = std::move (h.hits);
+    }
+    res.correction = Correction::fromTotal (turnDeg);
+
+    // Low end: where the two play together when there are hits (a kick and a
+    // bass hardly overlap, so the long-term spectrum would hide it), else
+    // over the whole spectrum below 300 Hz.
+    res.lowEndGainDb = (float) (hitFit >= 0.0 ? hitLowGainDb : spec.sumGainDb (res.correction, 20.0, 300.0));
     res.sumGainDb = (float) spec.sumGainDb (res.correction, 20.0, 20000.0);
 
     // ---- Time anchor ------------------------------------------------------------
@@ -456,7 +809,9 @@ AlignResult analyze (const float* ref, const float* trk, int n, const AnalyzerSe
         }
 
         // Below ~0.1 ms the "offset" is the rotation itself bending the peak.
-        if (psrDb >= 14.0 && std::abs (tau) >= std::max (1.0, 1e-4 * fs) && std::abs (tau) <= maxLag - 1.0)
+        // And two different sounds (a kick and its bass) have no common
+        // arrival: whatever peak the correlation has there means nothing.
+        if (psrDb >= 14.0 && cohMean >= 0.2 && std::abs (tau) >= std::max (1.0, 1e-4 * fs) && std::abs (tau) <= maxLag - 1.0)
         {
             res.hasOffset = true;
             res.offsetSamples = tau;
@@ -474,12 +829,18 @@ AlignResult analyze (const float* ref, const float* trk, int n, const AnalyzerSe
 
     // ---- Confidence -------------------------------------------------------------
     const double cFit = std::clamp ((fit - 0.2) / 0.6, 0.0, 1.0);
-    const double cCoh = std::clamp ((cohMean - 0.05) / 0.4, 0.0, 1.0);
+    // Noise against a kick still keeps some phase relation over a few
+    // pieces (~0.2), so the scale for hits starts above that.
+    const double cHit = std::clamp ((hitFit - 0.3) / 0.5, 0.0, 1.0);
+    const double cCoh = std::max (cHit, std::clamp ((cohMean - 0.05) / 0.4, 0.0, 1.0));
     const double cAmount = std::clamp (0.4 + 0.3 * frames.seconds, 0.4, 1.0);
     res.confidence = (float) ((0.45 * cFit + 0.3 * cCoh + 0.25 * agreement) * cAmount);
+    res.hitConfidence = (float) ((0.75 * cHit + 0.25) * cAmount);
 
     // Unrelated: little in common, and no sign of a shared arrival either.
-    res.status = (cohMean < 0.05 || (fit < 0.15 && psrDb < 14.0)) ? AlignStatus::unrelated : AlignStatus::ok;
+    const bool unrelated = hitFit >= 0.0 ? hitFit < 0.3 && (cohMean < 0.05 || psrDb < 14.0)
+                                         : cohMean < 0.05 || (fit < 0.15 && psrDb < 14.0);
+    res.status = unrelated ? AlignStatus::unrelated : AlignStatus::ok;
     return res;
 }
 

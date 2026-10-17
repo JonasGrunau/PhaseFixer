@@ -37,7 +37,13 @@ void LiveSpectrum::update (const Capture& cap)
         prepare (cap.sampleRate());
 
     const int64_t end = cap.written();
-    if (nextEnd < 0 || end < nextEnd - hop)   // first call, or the capture was reset
+    if (nextEnd >= 0 && end < nextEnd - hop)   // the capture restarted: what we have is stale
+    {
+        spec.reset (size, spec.sampleRate());
+        ++frames;
+        nextEnd = -1;
+    }
+    if (nextEnd < 0)
         nextEnd = std::max<int64_t> (size, end - (int64_t) (3.0 * cap.sampleRate()));
     // Far behind (editor was closed): only the last few seconds matter.
     nextEnd = std::max (nextEnd, end - (int64_t) (4.0 * cap.sampleRate()));

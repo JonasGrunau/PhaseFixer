@@ -30,6 +30,7 @@ public:
     Dial (juce::RangedAudioParameter& p, juce::String name, std::function<juce::String (float)> format);
 
     void setDimmed (bool d) { dimmed = d; repaint(); }
+    void setLabel (const juce::String& n) { if (n != name) { name = n; repaint(); } }
     void setShowsValue (bool s) { showsValue = s; repaint(); }
     void setBipolar (bool b) { bipolar = b; repaint(); }
     float getValue() const noexcept { return value; }
@@ -80,6 +81,29 @@ private:
     float textHeight;
     juce::ParameterAttachment attachment;
     bool on = false, accentWhenOn = false;
+};
+
+// A row of small tags, one inked, like the scope's trigger switch. Bound to
+// an on/off parameter: the first tag is off, the second on.
+class TagSwitch : public juce::Component
+{
+public:
+    TagSwitch (juce::RangedAudioParameter& p, juce::StringArray names);
+
+    int getIndex() const noexcept { return index; }
+    // Outline one (unselected) tag in vermilion: "this would be better". -1: none.
+    void setHint (int i) { if (i != hint) { hint = i; repaint(); } }
+    std::function<void()> onChange;
+
+    void paint (juce::Graphics&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+
+private:
+    juce::Rectangle<float> tagArea (int i) const;
+
+    juce::StringArray names;
+    juce::ParameterAttachment attachment;
+    int index = 0, hint = -1;
 };
 
 // The ALIGN key. Ink block at rest; while listening it turns to paper with a

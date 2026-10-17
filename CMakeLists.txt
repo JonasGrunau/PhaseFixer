@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 # Release builds pass the tag's version, e.g. -DPHASEFUCKER_VERSION=1.2.0.
-set(PHASEFUCKER_VERSION "0.2.0" CACHE STRING "Plugin version, MAJOR.MINOR.PATCH")
+set(PHASEFUCKER_VERSION "0.3.0" CACHE STRING "Plugin version, MAJOR.MINOR.PATCH")
 project(PhaseFucker VERSION ${PHASEFUCKER_VERSION} LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -28,6 +28,7 @@ add_library(phasefucker_core STATIC
     src/core/align/Capture.cpp
     src/core/align/CrossSpectrum.cpp
     src/core/align/LiveSpectrum.cpp
+    src/core/align/PhaseMap.cpp
     src/core/align/Rotator.cpp
 )
 target_include_directories(phasefucker_core PUBLIC src/core)
@@ -78,7 +79,9 @@ if(PHASEFUCKER_BUILD_PLUGIN)
         src/ui/Theme.cpp
         src/ui/Controls.cpp
         src/ui/Scope.cpp
-        src/ui/PhaseStrip.cpp)
+        src/ui/PhaseStrip.cpp
+        src/ui/MapLane.cpp
+        src/ui/ExportKey.cpp)
 
     target_sources(PhaseFucker PRIVATE ${PHASEFUCKER_UI_SOURCES})
     target_include_directories(PhaseFucker PRIVATE src)
@@ -111,6 +114,19 @@ if(PHASEFUCKER_BUILD_PLUGIN)
     target_link_libraries(phasefucker_snapshot PRIVATE
         phasefucker_core phasefucker_assets juce::juce_audio_utils
         juce::juce_recommended_config_flags)
+
+    # Dev tool: the plugin in a window with built-in material (or two files)
+    # playing through it, reference on the sidechain. ./start.sh runs it.
+    juce_add_gui_app(phasefucker_demo PRODUCT_NAME "PhaseFucker Demo")
+    target_sources(phasefucker_demo PRIVATE tools/Demo.cpp ${PHASEFUCKER_UI_SOURCES})
+    target_include_directories(phasefucker_demo PRIVATE src tests)
+    target_compile_definitions(phasefucker_demo PRIVATE
+        JucePlugin_Name="PhaseFucker"
+        JucePlugin_VersionString="${PROJECT_VERSION}"
+        JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_DISPLAY_SPLASH_SCREEN=0)
+    target_link_libraries(phasefucker_demo PRIVATE
+        phasefucker_core phasefucker_assets juce::juce_audio_utils
+        juce::juce_recommended_config_flags)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -126,7 +142,8 @@ if(PHASEFUCKER_BUILD_TESTS)
     add_executable(phasefucker_tests
         tests/TestDsp.cpp
         tests/TestRotator.cpp
-        tests/TestAnalyzer.cpp)
+        tests/TestAnalyzer.cpp
+        tests/TestPhaseMap.cpp)
     target_include_directories(phasefucker_tests PRIVATE tests)
     target_link_libraries(phasefucker_tests PRIVATE phasefucker_core Catch2::Catch2WithMain)
 

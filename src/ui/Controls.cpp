@@ -249,6 +249,51 @@ void Key::mouseUp (const juce::MouseEvent& e)
         attachment.setValueAsCompleteGesture (on ? 0.f : 1.f);
 }
 
+// ---- TagSwitch -----------------------------------------------------------------------
+
+TagSwitch::TagSwitch (juce::RangedAudioParameter& p, juce::StringArray n)
+    : names (std::move (n)),
+      attachment (p, [this] (float v) { index = juce::jlimit (0, names.size() - 1, juce::roundToInt (v)); repaint(); if (onChange) onChange(); })
+{
+    attachment.sendInitialUpdate();
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    setOpaque (true);
+}
+
+juce::Rectangle<float> TagSwitch::tagArea (int i) const
+{
+    const auto f = label (9.f);
+    float x = 0.f;
+    for (int k = 0;; ++k)
+    {
+        const float w = textWidth (f, names[k].toUpperCase()) + 18.f;
+        if (k == i) return { x, 0.f, w, (float) getHeight() };
+        x += w + 2.f;
+    }
+}
+
+void TagSwitch::paint (juce::Graphics& g)
+{
+    g.fillAll (col::paper);
+    for (int i = 0; i < names.size(); ++i)
+    {
+        const auto r = tagArea (i).reduced (1.f);
+        const bool on = i == index, hinted = i == hint && ! on;
+        g.setColour (on ? col::ink : col::paper);
+        g.fillRoundedRectangle (r, kRadius);
+        g.setColour (hinted ? col::accent : col::ink);
+        g.drawRoundedRectangle (r, kRadius, hinted ? 1.6f : 1.f);
+        caption (g, names[i], r, juce::Justification::centred, on ? col::paper : hinted ? col::accent : col::ink, 9.f);
+    }
+}
+
+void TagSwitch::mouseUp (const juce::MouseEvent& e)
+{
+    for (int i = 0; i < names.size(); ++i)
+        if (tagArea (i).contains (e.position) && i != index)
+            attachment.setValueAsCompleteGesture ((float) i);
+}
+
 // ---- AlignKey ------------------------------------------------------------------------
 
 void AlignKey::setLook (Look l, float p)

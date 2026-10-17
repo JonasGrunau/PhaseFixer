@@ -17,12 +17,23 @@ namespace
         return o;
     }
 
-    void turn (const Correction& c, bool bypass, float& cosOut, float& sinOut)
+    constexpr double kPi = std::numbers::pi;
+
+    // Wrapped to (-pi, pi].
+    double wrap (double a)
     {
-        const double a = bypass ? 0.0 : c.phaseDeg * std::numbers::pi / 180.0;
-        const double sign = (! bypass && c.invert) ? -1.0 : 1.0;
-        cosOut = (float) (sign * std::cos (a));
-        sinOut = (float) (sign * std::sin (a));
+        a = std::remainder (a, 2.0 * kPi);
+        return a <= -kPi ? a + 2.0 * kPi : a;
+    }
+
+    // cos and sin with the multiples of 90 degrees exact, so a flip is a
+    // plain sign change.
+    void unit (double a, double& c, double& s)
+    {
+        c = std::cos (a);
+        s = std::sin (a);
+        if (std::abs (c) < 1e-12) c = 0.0;
+        if (std::abs (s) < 1e-12) s = 0.0;
     }
 } // namespace
 
@@ -78,13 +89,27 @@ void Rotator::reset() noexcept
 
 void Rotator::setTarget (const Correction& c, bool bypass) noexcept
 {
-    turn (c, bypass, cosTarget, sinTarget);
+    setTarget (c.totalDeg(), bypass);
+}
+
+void Rotator::setTarget (double totalDeg, bool bypass) noexcept
+{
+    const double a = bypass ? 0.0 : wrap (totalDeg * kPi / 180.0);
     if (fresh)
     {
-        cosNow = cosTarget;
-        sinNow = sinTarget;
+        angleNow = angleTarget = a;
+        unit (a, cosNow, sinNow);
+        glideLeft = 0;
         fresh = false;
+        return;
     }
+    if (std::abs (wrap (a - angleTarget)) < 1e-9) return;
+    // Along the shorter arc, so the level stays put however far it turns.
+    angleTarget = a;
+    glideLeft = fadeLen;
+    const double step = wrap (a - angleNow) / fadeLen;
+    unit (step, cosStep, sinStep);
+    stepAngle = step;
 }
 
 void Rotator::runBlock() noexcept
@@ -115,7 +140,6 @@ void Rotator::runBlock() noexcept
 void Rotator::process (float* const* ch, int numCh, int numSamples) noexcept
 {
     numCh = std::min (numCh, channels);
-    const float step = 1.f / (float) fadeLen;
     for (int i = 0; i < numSamples; ++i)
     {
         const float l = ch[0][i], r = numCh > 1 ? ch[1][i] : 0.f;
@@ -126,13 +150,27 @@ void Rotator::process (float* const* ch, int numCh, int numSamples) noexcept
         const auto past = (size_t) ((directPos - lat) & directMask);
         directPos = (directPos + 1) & directMask;
 
-        cosNow += std::clamp (cosTarget - cosNow, -step, step);
-        sinNow += std::clamp (sinTarget - sinNow, -step, step);
+        if (glideLeft > 0)
+        {
+            if (--glideLeft == 0)
+            {
+                angleNow = angleTarget;
+                unit (angleNow, cosNow, sinNow);
+            }
+            else
+            {
+                angleNow += stepAngle;
+                const double c = cosNow * cosStep - sinNow * sinStep;
+                sinNow = sinNow * cosStep + cosNow * sinStep;
+                cosNow = c;
+            }
+        }
 
+        const auto co = (float) cosNow, si = (float) sinNow;
         const auto& h = output[(size_t) fill];
-        ch[0][i] = cosNow * direct[0][past] - sinNow * (float) h.real();
+        ch[0][i] = co * direct[0][past] - si * (float) h.real();
         if (numCh > 1)
-            ch[1][i] = cosNow * direct[1][past] - sinNow * (float) h.imag();
+            ch[1][i] = co * direct[1][past] - si * (float) h.imag();
 
         if (++fill == kBlock)
         {
@@ -170,9 +208,58 @@ std::vector<float> hilbertOffline (const float* x, int n, double fs)
 
 void rotateOffline (const float* x, const float* h, int n, const Correction& c, float* out) noexcept
 {
-    float co = 1.f, si = 0.f;
-    turn (c, false, co, si);
-    for (int i = 0; i < n; ++i) out[i] = co * x[i] - si * h[i];
+    double co = 1.0, si = 0.0;
+    unit (wrap (c.totalDeg() * kPi / 180.0), co, si);
+    for (int i = 0; i < n; ++i) out[i] = (float) co * x[i] - (float) si * h[i];
+}
+
+void renderOffline (const float* const* in, float* const* out, int numCh, int n, double fs,
+                    const std::vector<Turn>& turns, bool looped)
+{
+    if (n <= 0) return;
+    numCh = std::clamp (numCh, 1, 2);
+    Rotator r;
+    r.prepare (fs, numCh);
+    const int lat = r.latency();
+
+    // Feed: lead-in, the recording, run-out. Output j is input j - lat, so
+    // the recording comes out at [lead + lat, lead + lat + n).
+    const int lead = lat, total = lead + n + lat;
+    std::vector<float> feed[2];
+    for (int c = 0; c < numCh; ++c)
+    {
+        auto& f = feed[c];
+        f.assign ((size_t) total, 0.f);
+        std::copy (in[c], in[c] + n, f.begin() + lead);
+        if (looped)   // the loop's end runs into its start, and round again
+            for (int i = 0; i < lead; ++i)
+            {
+                f[(size_t) i] = in[c][((n - lead + i) % n + n) % n];
+                f[(size_t) (lead + n + i)] = in[c][i % n];
+            }
+    }
+
+    // Same turns at the same places as the real-time run.
+    std::vector<Turn> plan;
+    plan.push_back ({ 0, turns.empty() ? 0.0 : (looped ? turns.back().deg : turns.front().deg) });
+    for (const auto& t : turns)
+        plan.push_back ({ lead + std::clamp (t.sample, 0, n), t.deg });
+    if (looped && ! turns.empty())
+        plan.push_back ({ lead + n, turns.front().deg });
+
+    size_t next = 0;
+    for (int pos = 0; pos < total;)
+    {
+        while (next < plan.size() && plan[next].sample <= pos)
+            r.setTarget (plan[next++].deg, false);
+        int len = std::min (512, total - pos);
+        if (next < plan.size()) len = std::min (len, plan[next].sample - pos);
+        float* ch[2] = { feed[0].data() + pos, numCh > 1 ? feed[1].data() + pos : nullptr };
+        r.process (ch, numCh, len);
+        pos += len;
+    }
+    for (int c = 0; c < numCh; ++c)
+        std::copy (feed[c].begin() + lead + lat, feed[c].begin() + lead + lat + n, out[c]);
 }
 
 } // namespace pf

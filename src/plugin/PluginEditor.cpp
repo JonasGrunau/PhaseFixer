@@ -25,15 +25,18 @@ namespace
 
 PhaseFuckerEditor::PhaseFuckerEditor (PhaseFuckerProcessor& p)
     : AudioProcessorEditor (p), proc (p),
+      modeSwitch (p.param (ids::perHit), { "One turn", "Per hit" }),
       phaseDial (p.param (ids::phase), "Phase", [] (float v) { return degrees (v); }),
       polarityKey (p.param (ids::invert), juce::String (juce::CharPointer_UTF8 ("\xc3\x98")), 22.f),
       compareKey (p.param (ids::compare), "A/B", 11.f)
 {
     setLookAndFeel (&lnf);
     addAndMakeVisible (sheet);
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &refMeter, &trackMeter, &alignKey, &scope, &strip,
-                                                                       &phaseDial, &polarityKey, &compareKey, &resetLink })
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &refMeter, &trackMeter, &alignKey, &scope, &strip, &lane,
+                                                                       &modeSwitch, &exportKey, &phaseDial, &polarityKey, &compareKey, &resetLink })
         sheet.addAndMakeVisible (c);
+    modeSwitch.onChange = [this] { tick(); };
+    lane.setVisible (false);
 
     phaseDial.setShowsValue (false);
     phaseDial.setBipolar (true);
@@ -74,6 +77,10 @@ void PhaseFuckerEditor::layout()
 
     scope.setBounds (24, 88, 832, 252);
     strip.setBounds (24, 354, 832, 112);
+    lane.setBounds (24, 354, 832, 112);
+
+    modeSwitch.setBounds (150, 482, 140, 17);
+    exportKey.setBounds (764, 482, 92, 17);
 
     phaseDial.setBounds (24, 502, 78, 86);
     resetLink.setBounds (114, 568, 60, 14);
@@ -110,21 +117,37 @@ void PhaseFuckerEditor::Sheet::paint (juce::Graphics& g)
     g.setColour (col::hairline);
     g.fillRect (24.f, 478.f, 832.f, 1.f);
     sectionTag (g, "C", "Correction", { 24.f, 484.f });
+    caption (g, "Turn", { 122.f, 483.f, 28.f, 15.f }, juce::Justification::centredLeft, col::inkSoft, 9.f);
+    caption (g, "Export", { 700.f, 483.f, 60.f, 15.f }, juce::Justification::centredRight, col::inkSoft, 9.f);
     for (float dx : { 318.f, 402.f, 496.f })
         g.fillRect (dx, 504.f, 1.f, 80.f);
 
-    // Phase readout.
+    // Phase readout. Per hit: the turn playing now (map plus offset).
     {
         const auto c = ed.proc.correction();
         const bool off = ed.proc.isComparing();
         g.setFont (monoStrong (30.f));
         g.setColour (off ? col::inkFaint : col::ink);
-        g.drawText (degrees (c.phaseDeg), juce::Rectangle<float> (110.f, 506.f, 200.f, 36.f), juce::Justification::centredLeft, false);
+        juce::String big, line;
+        if (ed.perHitShown)
+        {
+            big = degrees (ed.liveShown);
+            line = off ? juce::String ("A/B: correction off")
+                 : ed.mapPoints == 0 ? juce::String ("no map yet, ALIGN learns one")
+                 : std::abs (c.totalDeg()) > 0.05 ? "map " + juce::String (c.totalDeg() > 0.0 ? "+ " : juce::String (juce::CharPointer_UTF8 ("â ")))
+                                                     + degrees (std::abs (c.totalDeg())).substring (1) + " offset"
+                                                   : juce::String ("now, from the map");
+        }
+        else
+        {
+            big = degrees (c.phaseDeg);
+            line = off ? juce::String ("A/B: correction off")
+                 : c.invert ? "flipped, " + degrees (c.totalDeg()) + " in all"
+                            : juce::String ("every frequency, linear phase");
+        }
+        g.drawText (big, juce::Rectangle<float> (110.f, 506.f, 200.f, 36.f), juce::Justification::centredLeft, false);
         g.setFont (mono (10.f));
         g.setColour (col::inkSoft);
-        const auto line = off ? juce::String ("A/B: correction off")
-                        : c.invert ? "flipped, " + degrees (c.totalDeg()) + " in all"
-                                   : juce::String ("every frequency, linear phase");
         g.drawText (line, juce::Rectangle<float> (112.f, 544.f, 200.f, 14.f), juce::Justification::centredLeft, false);
     }
     caption (g, "Polarity", { 336.f, 502.f, 70.f, 14.f }, juce::Justification::centredLeft, col::inkSoft, 9.5f);
@@ -144,7 +167,13 @@ void PhaseFuckerEditor::Sheet::paint (juce::Graphics& g)
         if (st.hasResult && st.result.status == pf::AlignStatus::ok)
         {
             const auto& r = st.result;
-            if (r.hasOffset)
+            if (! r.hasOffset && r.coherence < 0.2f)
+            {
+                // A kick and a bass: no common arrival to measure.
+                line1 = "different sounds";
+                line2 = "nothing to line up in time, only the turn";
+            }
+            else if (r.hasOffset)
             {
                 const double ms = std::abs (r.offsetSamples) / fs * 1000.0;
                 line1 = "track " + theme::fixed (ms, 3) + " ms " + (r.offsetSamples > 0.0 ? "late" : "early");
@@ -220,8 +249,36 @@ void PhaseFuckerEditor::tick()
             alignKey.setLook (fresh ? (st.result.status == pf::AlignStatus::ok ? Look::aligned : Look::failed) : Look::idle, 0.f);
     }
 
+    // One turn or per hit: section B and the readout follow. When one turn
+    // was found but the hits pull apart, PER HIT is outlined.
+    const bool perHit = proc.isPerHit();
+    modeSwitch.setHint (! perHit && st.hasResult && ! st.perHit && st.result.status == pf::AlignStatus::ok
+                                && st.result.hits.size() >= 4 && st.result.hitAgreement < 0.6f ? 1 : -1);
+    if (perHit != perHitShown)
+    {
+        perHitShown = perHit;
+        strip.setVisible (! perHit);
+        lane.setVisible (perHit);
+        phaseDial.setLabel (perHit ? "Offset" : "Phase");
+        sheet.repaint (readoutArea());
+    }
+    if (perHit)
+    {
+        lane.refresh();
+        const int points = proc.getMap().size();
+        const double live = proc.getLiveTurn();
+        if (points != mapPoints || std::abs (live - liveShown) > 0.05)
+        {
+            mapPoints = points;
+            liveShown = live;
+            sheet.repaint (readoutArea());
+        }
+    }
+    else if (ticks % 2 == 0)
+        strip.refresh();
+
     scope.refresh();
-    if (ticks % 2 == 0) strip.refresh();
+    exportKey.refresh();
     updateStatus();
 }
 
@@ -232,6 +289,10 @@ void PhaseFuckerEditor::updateStatus()
     juce::String s, right;
     bool warn = false;
 
+    using ES = PhaseFuckerProcessor::ExportStage;
+    const auto ex = proc.getExportInfo();
+    const bool exportFresh = ex.stage == ES::ready && juce::Time::getMillisecondCounter() - exportKey.readySince() < 20000;
+
     if (st.stage == PhaseFuckerProcessor::Stage::listening)
     {
         s = juce::String (juce::CharPointer_UTF8 ("Listening \xe2\x80\x94 play a part where both tracks sound. Press again to use what\xe2\x80\x99s there."));
@@ -239,6 +300,25 @@ void PhaseFuckerEditor::updateStatus()
     }
     else if (st.stage == PhaseFuckerProcessor::Stage::analysing)
         s = juce::String (juce::CharPointer_UTF8 ("Analysing the last 10 seconds\xe2\x80\xa6"));
+    else if (ex.stage == ES::armed)
+        s = "Export: recording starts when playback starts or the loop comes round. Click again to cancel.";
+    else if (ex.stage == ES::recording)
+    {
+        s = "Recording the corrected track from " + ex.where + juce::String (juce::CharPointer_UTF8 (" \xe2\x80\x94 it stops when the loop comes round or playback stops. Click to stop now."));
+        right = "REC " + theme::fixed (ex.seconds, 1) + " s";
+    }
+    else if (ex.stage == ES::rendering)
+        s = juce::String (juce::CharPointer_UTF8 ("Rendering the pass\xe2\x80\xa6"));
+    else if (ex.stage == ES::failed && exportFresh)
+    {
+        s = "Export failed: nothing recorded, or the file couldn't be written. Click to try again.";
+        warn = true;
+    }
+    else if (exportFresh)
+    {
+        s = "Saved " + theme::fixed (ex.seconds, 2) + " s from " + ex.where + " to Music/PhaseFucker. Drag DRAG WAV into the arrangement at " + ex.where + ".";
+        right = ex.file.getFileName().length() > 26 ? juce::String() : ex.file.getFileName();
+    }
     else if (! proc.hasSidechainBus())
     {
         s = juce::String (juce::CharPointer_UTF8 ("No reference \xe2\x80\x94 route the track to match into the sidechain (Logic: Side Chain menu above \xc2\xb7 Live: Sidechain in the device)."));
@@ -251,6 +331,25 @@ void PhaseFuckerEditor::updateStatus()
     }
     else if (proc.isComparing())
         s = juce::String (juce::CharPointer_UTF8 ("A/B: the track plays uncorrected (same latency) \xe2\x80\x94 switch off to hear the alignment."));
+    else if (st.hasResult && st.perHit && (st.noTimeline || (st.result.status == pf::AlignStatus::ok && st.mappedHits == 0)))
+    {
+        s = st.noTimeline ? juce::String (juce::CharPointer_UTF8 ("Per hit needs the DAW playing \xe2\x80\x94 loop the part, start playback, then ALIGN."))
+                          : juce::String (juce::CharPointer_UTF8 ("No hits in the reference to map \xe2\x80\x94 the kick (or what leads) goes on the sidechain."));
+        warn = true;
+    }
+    else if (st.hasResult && st.perHit && st.result.status == pf::AlignStatus::ok)
+    {
+        const auto map = proc.getMap();
+        double gain = 0.0;
+        for (const auto& p : map.points) gain += p.gainDb;
+        s = "Mapped " + juce::String (st.mappedHits) + (st.mappedHits == 1 ? " hit" : " hits");
+        if (map.size() != st.mappedHits) s += " (" + juce::String (map.size()) + " in the map)";
+        if (! map.empty()) s += kDot + "low end " + signedNumber (gain / map.size(), 1) + " dB per hit";
+        if (std::abs (c.totalDeg()) > 0.05) s += kDot + "offset " + degrees (c.totalDeg());
+        const auto pct = juce::String (juce::roundToInt (st.result.hitConfidence * 100.f)) + " %";
+        warn = st.result.hitConfidence < 0.5f;
+        right = (warn ? "LOW CONFIDENCE " : "CONFIDENCE ") + pct;
+    }
     else if (st.hasResult && st.result.status == pf::AlignStatus::ok)
     {
         const auto& r = st.result;
@@ -258,8 +357,13 @@ void PhaseFuckerEditor::updateStatus()
         const bool edited = std::abs (c.phaseDeg - rc.phaseDeg) > 0.05 || c.invert != rc.invert;
         s = juce::String (edited ? "Detected " : "Turned ") + degrees (rc.phaseDeg);
         if (rc.invert) s += " + flip";
-        s += kDot + "low end " + signedNumber (r.lowEndGainDb, 1) + " dB" + kDot + "full band " + signedNumber (r.sumGainDb, 1) + " dB";
+        if (r.coherence < 0.2f && ! r.hits.empty())   // a kick and a bass: only where they meet counts
+            s += kDot + "low end " + signedNumber (r.lowEndGainDb, 1) + " dB where they meet";
+        else
+            s += kDot + "low end " + signedNumber (r.lowEndGainDb, 1) + " dB" + kDot + "full band " + signedNumber (r.sumGainDb, 1) + " dB";
         if (edited) s += kDot + "adjusted by hand";
+        // The hits pull apart (a bass changing notes under the kick): one turn is a compromise.
+        else if (r.hits.size() >= 4 && r.hitAgreement < 0.6f) s += kDot + "the hits want different turns, try PER HIT";
         right = "CONFIDENCE " + juce::String (juce::roundToInt (r.confidence * 100.f)) + " %";
         warn = r.confidence < 0.5f;
         if (warn) right = "LOW CONFIDENCE " + juce::String (juce::roundToInt (r.confidence * 100.f)) + " %";
@@ -269,6 +373,8 @@ void PhaseFuckerEditor::updateStatus()
         s = failureText (st.result.status);
         warn = true;
     }
+    else if (proc.isPerHit())
+        s = juce::String (juce::CharPointer_UTF8 ("Per hit: loop the part, press play, then ALIGN \xe2\x80\x94 every hit of the reference gets its own turn."));
     else
         s = juce::String (juce::CharPointer_UTF8 ("Press ALIGN while both tracks play \xe2\x80\x94 it listens until it has heard about 2 s of them together."));
 

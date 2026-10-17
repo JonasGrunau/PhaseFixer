@@ -3,6 +3,8 @@
 #include "align/Rotator.h"
 
 #include <catch2/catch_test_macros.hpp>
+
+#include <limits>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 using namespace pf;
@@ -123,6 +125,115 @@ TEST_CASE ("Rotator changes don't click", "[rotator]")
     CHECK (worst < 1.6 * maxStep);
 }
 
+TEST_CASE ("Rotator turns along the arc: the level holds through a big turn", "[rotator]")
+{
+    const double fs = 48000.0, hz = 110.0;
+    const int n = 24000, period = (int) std::lround (fs / hz);
+    testutil::Signal x ((size_t) n);
+    for (int i = 0; i < n; ++i) x[(size_t) i] = (float) std::sin (2.0 * std::numbers::pi * hz * i / fs);
+
+    Rotator r;
+    r.prepare (fs, 1);
+    r.setTarget (0.0, false);
+    testutil::Signal y (x);
+    for (int start = 0; start < n; start += 64)
+    {
+        r.setTarget (start >= 9000 ? 170.0 : 0.0, false);
+        float* ch[] = { y.data() + start };
+        r.process (ch, 1, std::min (64, n - start));
+    }
+    // RMS over every period from well after the start. A cut straight through
+    // the circle would dip ~21 dB in the middle of the turn; what is left is
+    // the window not fitting the briefly faster wave.
+    double lo = 1e9, hi = 0.0;
+    for (int s = r.latency() + 4800; s + period < n; s += period / 4)
+    {
+        double e = 0.0;
+        for (int i = s; i < s + period; ++i) e += (double) y[(size_t) i] * y[(size_t) i];
+        const double rms = std::sqrt (e / period);
+        lo = std::min (lo, rms);
+        hi = std::max (hi, rms);
+    }
+    INFO ("rms " << lo << " .. " << hi);
+    CHECK (20.0 * std::log10 (hi / lo) < 1.5);
+}
+
+TEST_CASE ("Offline render plays what the real-time chain played, without the latency", "[rotator]")
+{
+    const double fs = 48000.0;
+    const auto x = testutil::drums (fs, 1.5, 21);
+    const int n = (int) x.size();
+    std::vector<Turn> turns { { 0, 30.0 }, { 20000, -120.0 }, { 20480, -110.0 }, { 51000, 175.0 } };
+
+    // Real time: targets at block starts, in odd block sizes.
+    Rotator r;
+    r.prepare (fs, 2);
+    testutil::Signal l (x), rr (testutil::scaled (x, 0.5));
+    l.resize ((size_t) n + 4096, 0.f);
+    rr.resize ((size_t) n + 4096, 0.f);
+    size_t next = 0;
+    for (int s = 0; s < n + 4096;)
+    {
+        while (next < turns.size() && turns[next].sample <= s) r.setTarget (turns[next++].deg, false);
+        int len = std::min (300, n + 4096 - s);
+        if (next < turns.size()) len = std::min (len, turns[next].sample - s);
+        float* ch[] = { l.data() + s, rr.data() + s };
+        r.process (ch, 2, len);
+        s += len;
+    }
+
+    const auto half = testutil::scaled (x, 0.5);
+    const float* in[] = { x.data(), half.data() };
+    testutil::Signal ol ((size_t) n), orr ((size_t) n);
+    float* out[] = { ol.data(), orr.data() };
+    renderOffline (in, out, 2, n, fs, turns, false);
+
+    const int lat = r.latency();
+    double worst = 0.0;
+    for (int i = 0; i < n; ++i)
+    {
+        worst = std::max (worst, (double) std::abs (ol[(size_t) i] - l[(size_t) (i + lat)]));
+        worst = std::max (worst, (double) std::abs (orr[(size_t) i] - rr[(size_t) (i + lat)]));
+    }
+    CHECK (worst < 1e-5);
+}
+
+TEST_CASE ("Offline render of a loop pass joins its end to its start", "[rotator]")
+{
+    const double fs = 48000.0;
+    const auto loop = testutil::drums (fs, 1.0, 22);
+    const int n = (int) loop.size();
+    std::vector<Turn> turns { { 0, 60.0 }, { n / 2, -40.0 } };
+
+    // The loop played three times in real time, turns repeating each pass.
+    Rotator r;
+    r.prepare (fs, 1);
+    testutil::Signal y;
+    for (int pass = 0; pass < 3; ++pass) y.insert (y.end(), loop.begin(), loop.end());
+    for (int pass = 0; pass < 3; ++pass)
+        for (int s = 0; s < n;)
+        {
+            for (const auto& t : turns)
+                if (t.sample == s) r.setTarget (t.deg, false);
+            const int len = std::min (256, (s < n / 2 ? n / 2 : n) - s);
+            float* ch[] = { y.data() + pass * n + s };
+            r.process (ch, 1, len);
+            s += len;
+        }
+
+    const float* in[] = { loop.data() };
+    testutil::Signal o ((size_t) n);
+    float* out[] = { o.data() };
+    renderOffline (in, out, 1, n, fs, turns, true);
+
+    // The middle pass, which has the loop on both sides like the render.
+    const int lat = r.latency();
+    double worst = 0.0;
+    for (int i = 0; i < n; ++i)
+        worst = std::max (worst, (double) std::abs (o[(size_t) i] - y[(size_t) (n + i + lat)]));
+    CHECK (worst < 1e-4);
+}
+
 TEST_CASE ("Offline rotation matches the real-time chain", "[rotator]")
 {
     const double fs = 44100.0;
@@ -172,4 +283,24 @@ TEST_CASE ("Capture keeps the last seconds and finds shared hits", "[capture]")
     float score = 0.f;
     CHECK (cap.strongestHit (2.0, 0, score) >= 0);
     CHECK (score > 3.f);
+}
+
+TEST_CASE ("Capture places what it heard on the host's timeline", "[capture]")
+{
+    const double fs = 48000.0, perSample = 2.0 / fs;   // 120 BPM
+    Capture cap;
+    cap.prepare (fs, 4.0);
+    const auto x = testutil::noise (48000, 0.1, 3);
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    int64_t at = 0;
+    for (int s = 0; s < 48000; s += 441, at += 441)
+    {
+        // Playing from beat 8 for the first half second, then stopped.
+        cap.setTimeline (s < 24000 ? 8.0 + (double) s * perSample : nan, perSample);
+        cap.push (x.data() + s, x.data() + s, std::min (441, 48000 - s));
+    }
+    CHECK_THAT (cap.timelineAt (0), WithinAbs (8.0, 1e-9));
+    CHECK_THAT (cap.timelineAt (12345), WithinAbs (8.0 + 12345 * perSample, 1e-9));
+    CHECK (std::isnan (cap.timelineAt (40000)));
+    CHECK (std::isnan (cap.timelineAt (60000)));   // not written yet
 }

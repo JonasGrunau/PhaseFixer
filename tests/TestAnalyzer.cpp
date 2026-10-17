@@ -96,7 +96,7 @@ TEST_CASE ("Analyzer turns a delayed track to help the low end, and reports the 
     // Kick in / kick out: the second mic 2.9 ms later. A rotation can't undo a
     // delay, but it can line up the low end, which is where it cancels.
     const double fs = 48000.0;
-    const auto ref = testutil::drums (fs, 6.0, 7);
+    const auto ref = testutil::kicks (fs, 6.0, 7);
     const double d = 0.0029 * fs;
     const auto trk = testutil::scaled (testutil::delayed (ref, d), -0.8);
     const auto r = align (ref, trk, fs);
@@ -107,8 +107,9 @@ TEST_CASE ("Analyzer turns a delayed track to help the low end, and reports the 
     CHECK_THAT (r.offsetSamples, WithinAbs (d, 0.5));
     CHECK (r.timeFixDb > 0.f);
 
-    // Measured on the audio itself: the found turn sums better below 300 Hz
-    // than turning 30 degrees either way.
+    // Measured on the audio itself: below 300 Hz the found turn sums within
+    // half a dB of the best any turn can do (the hits are judged where they
+    // sound, so it leans a little towards the attack).
     const auto lowSum = [&] (double deg) {
         const auto s = testutil::sum (ref, testutil::rotated (trk, deg));
         const auto lp = testutil::Biquad::lowpass (300.0, 0.7, fs);
@@ -117,9 +118,45 @@ TEST_CASE ("Analyzer turns a delayed track to help the low end, and reports the 
         for (float v : low) e += (double) v * v;
         return e;
     };
-    const double found = r.correction.totalDeg();
-    CHECK (lowSum (found) > lowSum (found - 30.0));
-    CHECK (lowSum (found) > lowSum (found + 30.0));
+    double best = 0.0;
+    for (double deg = -180.0; deg < 180.0; deg += 5.0) best = std::max (best, lowSum (deg));
+    const double found = lowSum (r.correction.totalDeg());
+    INFO ("found " << 10.0 * std::log10 (found / best) << " dB from the best turn, " << 10.0 * std::log10 (found / lowSum (0.0)) << " dB over none");
+    CHECK (found > best * std::pow (10.0, -0.05));
+    CHECK (found > 1.25 * lowSum (0.0));
+}
+
+TEST_CASE ("Analyzer finds a turn per hit when the track changes under the kick", "[analyzer]")
+{
+    // A kick on every beat; the track answers each kick turned by a
+    // different angle, like a bass changing notes. One angle can't fit all.
+    const double fs = 48000.0, beat = 0.5;
+    const double turns[] = { 20.0, 110.0, -60.0, 160.0, 20.0, 110.0, -60.0, 160.0, 20.0, 110.0 };
+    const int n = (int) (fs * beat * 10.5);
+    Signal ref ((size_t) n, 0.f), trk ((size_t) n, 0.f);
+    testutil::Rng rng (5);
+    for (int k = 0; k < 10; ++k)
+    {
+        Signal one ((size_t) n, 0.f);
+        testutil::addKick (one, (int) ((0.2 + k * beat) * fs), fs, 1.0, rng);
+        ref = testutil::sum (ref, one);
+        trk = testutil::sum (trk, testutil::rotated (one, turns[k]));
+    }
+
+    const auto r = align (ref, trk, fs);
+    INFO (describe (r));
+    REQUIRE (r.status == AlignStatus::ok);
+    REQUIRE (r.hits.size() >= 8);
+    CHECK (r.hitAgreement < 0.8f);
+    for (const auto& h : r.hits)
+    {
+        const int k = (int) std::lround ((h.sample / fs - 0.2) / beat);
+        REQUIRE (k >= 0);
+        REQUIRE (k < 10);
+        INFO ("hit " << k << " at " << h.sample / fs << " s: " << h.totalDeg << " deg, fit " << h.fit << ", +" << h.gainDb << " dB");
+        CHECK_THAT (angleDiff (h.totalDeg, -turns[k]), WithinAbs (0.0, 3.0));
+        CHECK (h.fit > 0.8f);
+    }
 }
 
 TEST_CASE ("Analyzer says so when the signals are unrelated", "[analyzer]")

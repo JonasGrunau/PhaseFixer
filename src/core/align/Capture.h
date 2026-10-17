@@ -16,7 +16,8 @@ namespace pf
 //
 // Alongside the samples it keeps the energy of every kBlock samples, which is
 // enough to tell how much shared signal there is and where the hits are
-// without touching the audio.
+// without touching the audio, and where each block sat on the host's
+// timeline (quarter notes), so hits can be placed in the song.
 class Capture
 {
 public:
@@ -24,9 +25,15 @@ public:
 
     void prepare (double sampleRate, double seconds = 12.0);
     void reset() noexcept;
+    // Forgets everything so far without clearing memory (audio thread):
+    // readers only ever look at what was written since.
+    void restart() noexcept;
 
     // Audio thread. `ref` may be null (no sidechain): it counts as silence.
     void push (const float* ref, const float* track, int n) noexcept;
+    // Audio thread, before push(): the timeline position of the next sample
+    // and how far it moves per sample. NaN while the transport stands.
+    void setTimeline (double ppqOfNext, double ppqPerSample) noexcept;
 
     double sampleRate() const noexcept { return fs; }
     int capacity() const noexcept { return size; }
@@ -46,6 +53,10 @@ public:
     // recent to have their tail captured yet.
     int64_t strongestHit (double windowSeconds, int minAgeSamples, float& scoreDb) const noexcept;
 
+    // Timeline position of a captured sample; NaN when it is unknown (the
+    // transport stood) or no longer in the buffer.
+    double timelineAt (int64_t index) const noexcept;
+
     // Mean square of one block (absolute block index), reference or track.
     float blockEnergy (int64_t block, bool reference) const noexcept;
     int64_t blocksWritten() const noexcept { return written() / kBlock; }
@@ -54,9 +65,12 @@ private:
     double fs = 48000.0;
     int size = 0, mask = 0, blocks = 0, blockMask = 0;
     std::unique_ptr<std::atomic<float>[]> ref, trk, refBlock, trkBlock;
+    std::unique_ptr<std::atomic<double>[]> blockPpq, blockRate;
     std::atomic<int64_t> count { 0 };
     double accRef = 0.0, accTrk = 0.0;
     int accN = 0;
+    double tlPpq = 0.0, tlRate = 0.0, accPpq = 0.0;   // audio thread
+    int64_t tlIndex = 0;
 };
 
 } // namespace pf

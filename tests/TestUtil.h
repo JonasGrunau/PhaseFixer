@@ -68,6 +68,29 @@ inline Signal drums (double fs, double seconds, uint64_t seed = 1)
     return x;
 }
 
+// One kick (falling sine plus a click) into x at `at`.
+inline void addKick (Signal& x, int at, double fs, double vel, Rng& rng)
+{
+    double phase = 0.0;
+    for (int i = 0; i < (int) (0.4 * fs) && at + i < (int) x.size(); ++i)
+    {
+        const double t = i / fs;
+        phase += 2.0 * std::numbers::pi * (50.0 + 90.0 * std::exp (-t * 30.0)) / fs;
+        x[(size_t) (at + i)] += (float) (vel * (0.8 * std::sin (phase) * std::exp (-t * 9.0) + 0.2 * rng.uniform() * std::exp (-t * 400.0)));
+    }
+}
+
+// Kicks on every beat at 120 BPM, a little loose, over a faint noise floor.
+inline Signal kicks (double fs, double seconds, uint64_t seed = 1)
+{
+    Signal x ((size_t) (fs * seconds), 0.f);
+    Rng rng (seed);
+    for (auto& v : x) v = (float) (0.0003 * rng.uniform());
+    for (double t = 0.05; t < seconds; t += 0.5)
+        addKick (x, (int) ((t + 0.004 * rng.uniform()) * fs), fs, 0.85 + 0.15 * rng.uniform(), rng);
+    return x;
+}
+
 inline Signal noise (int n, double rms, uint64_t seed)
 {
     Signal x ((size_t) n);

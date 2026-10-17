@@ -3,7 +3,7 @@
 ;   iscc /DAppVersion=1.2.0 /DArtefacts=<repo>\build\PhaseFucker_artefacts\Release /O<out-dir> packaging\windows\PhaseFucker.iss
 
 #ifndef AppVersion
-  #define AppVersion "0.2.0"
+  #define AppVersion "0.3.0"
 #endif
 #ifndef Artefacts
   #define Artefacts "..\..\build\PhaseFucker_artefacts\Release"

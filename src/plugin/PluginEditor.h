@@ -2,6 +2,8 @@
 
 #include "PluginProcessor.h"
 #include "ui/Controls.h"
+#include "ui/ExportKey.h"
+#include "ui/MapLane.h"
 #include "ui/PhaseStrip.h"
 #include "ui/Scope.h"
 
@@ -9,8 +11,9 @@
 // resized (fixed aspect):
 //   header   wordmark, input meters, ALIGN
 //   A        scope
-//   B        phase / frequency
-//   C        correction: phase, polarity, A/B, time anchor
+//   B        phase / frequency, or in per-hit mode the phase map
+//   C        correction: one turn or per hit, phase (offset), polarity, A/B,
+//            time anchor, export
 //   footer   one line of what's going on
 //
 // Nothing repaints on a timer unless what it shows changed: the controls are
@@ -43,6 +46,7 @@ private:
     void updateStatus();
 
     static juce::Rectangle<int> readoutArea() { return { 108, 500, 206, 84 }; }
+    static juce::Rectangle<int> sectionCHeader() { return { 24, 480, 832, 20 }; }
     static juce::Rectangle<int> anchorArea() { return { 512, 498, 344, 90 }; }
     static juce::Rectangle<int> footerArea() { return { 24, 596, 832, 20 }; }
 
@@ -54,13 +58,18 @@ private:
     AlignKey alignKey;
     Scope scope { proc };
     PhaseStrip strip { proc };
+    MapLane lane { proc };
+    TagSwitch modeSwitch;
+    ExportKey exportKey { proc };
 
     Dial phaseDial;
     Key polarityKey, compareKey;
     TextLink resetLink { "Reset" };
 
     juce::String status, statusRight, anchorKey;
-    bool statusWarn = false;
+    bool statusWarn = false, perHitShown = false;
+    double liveShown = 0.0;
+    int mapPoints = 0;
     juce::uint32 seenResult = 0;
     int ticks = 0, refQuietTicks = 0;
 };

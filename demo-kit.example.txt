@@ -1,0 +1,14 @@
+# Samples for ./start.sh's built-in scenarios. Copy to demo-kit.txt (ignored
+# by git: sample packs aren't ours to share) and point it at your files.
+# Paths are absolute, start with ~, or are relative to this file.
+
+tempo = 140                                  # the bass shots' tempo: one shot = one beat
+pattern = offbeat                            # offbeat: one note on the "and" of every beat, rings until the next
+                                             # rolling: on the three 16ths after the kick (K-B-B-B), gated
+
+kick = ~/Samples/Kicks/Kick F#.wav           # a short kick, tuned to the bass
+
+bass = ~/Samples/Bass Shots/Bass F#.wav      # the root, on every beat
+bass = ~/Samples/Bass Shots/Bass A.wav       # up to three more notes, one patch:
+bass = ~/Samples/Bass Shots/Bass E.wav       # "changes under the kick" uses them
+bass = ~/Samples/Bass Shots/Bass D.wav       # at the ends of the bars
