@@ -18,6 +18,9 @@ public:
     void drawCornerResizer (juce::Graphics&, int w, int h, bool isMouseOver, bool isMouseDragging) override;
 };
 
+// Every control paints its own paper and is opaque, so repainting one never
+// repaints the sheet behind it.
+
 // A measuring dial on a parameter: paper disc, ink ring with fine ticks, a
 // pointer with a vermilion tip. Drag up/down (Shift = fine), wheel, double-
 // click to type a value, Alt/Cmd-click to reset.
@@ -84,6 +87,7 @@ private:
 class AlignKey : public juce::Component
 {
 public:
+    AlignKey() { setOpaque (true); }
     enum class Look { idle, listening, analysing, aligned, failed };
     void setLook (Look l, float progress);
     std::function<void()> onClick;
@@ -103,41 +107,27 @@ private:
 class LevelMeter : public juce::Component
 {
 public:
-    explicit LevelMeter (juce::String n) : name (std::move (n)) {}
+    explicit LevelMeter (juce::String n) : name (std::move (n)) { setOpaque (true); }
     void push (float peakLinear);   // once per UI tick
     void setMissing (bool m, juce::String why = {});
     void paint (juce::Graphics&) override;
 
 private:
     juce::String name, missingText;
-    float levelDb = -100.f, holdDb = -100.f;
+    float levelDb = -100.f, holdDb = -100.f, shownLevel = -100.f, shownHold = -100.f;
     int holdTicks = 0;
     bool missing = false;
-};
-
-// "LOOKAHEAD  AUTO · 5 ms" — click for a menu of tiers.
-class LookaheadField : public juce::Component
-{
-public:
-    void set (int mode, double effectiveMs, bool clamped);
-    std::function<void (int)> onChoose;   // -1 = auto, else tier index
-
-    void paint (juce::Graphics&) override;
-    void mouseUp (const juce::MouseEvent&) override;
-    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
-    void mouseExit (const juce::MouseEvent&) override { repaint(); }
-
-private:
-    int mode = -1;
-    double ms = 0.0;
-    bool clamped = false;
 };
 
 // Small underlined caption that does one thing ("RESET").
 class TextLink : public juce::Component
 {
 public:
-    explicit TextLink (juce::String t) : text (std::move (t)) { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
+    explicit TextLink (juce::String t) : text (std::move (t))
+    {
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+        setOpaque (true);
+    }
     std::function<void()> onClick;
     void paint (juce::Graphics&) override;
     void mouseUp (const juce::MouseEvent&) override;

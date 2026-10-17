@@ -1,30 +1,26 @@
 #pragma once
 
-#include "align/Aligner.h"
 #include "align/Analyzer.h"
 #include "align/Capture.h"
+#include "align/Rotator.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
 namespace ids
 {
-    inline constexpr auto shift = "shift";
+    inline constexpr auto phase = "phase";
     inline constexpr auto invert = "invert";
-    inline constexpr auto rotate = "rotate";
-    inline constexpr auto rotateFreq = "rotate_freq";
-    inline constexpr auto rotateQ = "rotate_q";
     inline constexpr auto compare = "compare";
 }
 
-// The plugin sits on the track to be moved; the reference arrives on the
+// The plugin sits on the track to be turned; the reference arrives on the
 // sidechain. Both are kept (mono, uncorrected) in a Capture. ALIGN hands the
 // last seconds of it to a worker thread running the analyzer, and the result
 // is written into the parameters, so it is undoable and automatable like a
-// hand edit. The track then runs through the Aligner.
+// hand edit. The track then runs through the Rotator: a PHA-979 style phase
+// rotation with a fixed, host-compensated latency; nothing moves in time.
 class PhaseFuckerProcessor : public juce::AudioProcessor,
-                             private juce::AsyncUpdater,
-                             private juce::Timer,
-                             private juce::AudioProcessorValueTreeState::Listener
+                             private juce::AsyncUpdater
 {
 public:
     PhaseFuckerProcessor();
@@ -81,15 +77,7 @@ public:
     void resetCorrection();
     static constexpr double kNeededSeconds = 2.0, kMinSeconds = 0.5, kWindowSeconds = 10.0;
 
-    // ---- Lookahead ------------------------------------------------------------
-    // Auto picks the smallest tier that covers the current shift, 300 ms after
-    // the shift stops moving. The latency the host compensates follows it.
-    static constexpr std::array<double, 5> kLookaheadTiers { 0.0, 5.0, 10.0, 20.0, 50.0 };
-    static constexpr int kAuto = -1;
-    int getLookaheadMode() const noexcept { return lookaheadMode; }
-    void setLookaheadMode (int tierOrAuto);
-    double getLookaheadMs() const noexcept { return lookaheadMs.load (std::memory_order_relaxed); }
-    bool isShiftClamped() const noexcept { return shiftClamped.load (std::memory_order_relaxed); }
+    double getLatencyMs() const noexcept { return pf::Rotator::latencyFor (getRate()) * 1000.0 / getRate(); }
 
     // ---- For the editor -------------------------------------------------------
     // Runs f (const pf::Capture&) with the capture locked against being
@@ -109,11 +97,8 @@ private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 
     void handleAsyncUpdate() override;
-    void timerCallback() override;
-    void parameterChanged (const juce::String& id, float value) override;
     void runAlignJob();
     void applyResult (const pf::AlignResult& r);
-    void updateLookahead();
     void setParam (const char* id, float plainValue);
 
     struct Worker : juce::Thread
@@ -123,26 +108,17 @@ private:
         PhaseFuckerProcessor& owner;
     };
 
-    std::atomic<float>* shiftParam = nullptr;
+    std::atomic<float>* phaseParam = nullptr;
     std::atomic<float>* invertParam = nullptr;
-    std::atomic<float>* rotateParam = nullptr;
-    std::atomic<float>* rotateFreqParam = nullptr;
-    std::atomic<float>* rotateQParam = nullptr;
     std::atomic<float>* compareParam = nullptr;
 
     pf::Capture capture;
     mutable juce::ReadWriteLock captureLock;   // writers: prepareToPlay only
-    pf::Aligner aligner;
+    pf::Rotator rotator;
     juce::AudioBuffer<float> mono;   // [0] reference, [1] track
     std::atomic<double> currentRate { 48000.0 };
     std::atomic<bool> sidechainActive { false };
     std::atomic<float> refPeak { 0.f }, trkPeak { 0.f };
-
-    int lookaheadMode = kAuto;
-    std::atomic<double> lookaheadMs { 0.0 };
-    std::atomic<bool> shiftClamped { false };
-    std::atomic<juce::uint32> shiftMovedAt { 0 };
-    std::atomic<bool> shiftPending { false };
 
     Worker worker { *this };
     std::atomic<bool> jobRequested { false }, analyseNow { false };

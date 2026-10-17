@@ -1,7 +1,5 @@
 #include "CrossSpectrum.h"
 
-#include "dsp/Allpass.h"
-
 #include <algorithm>
 #include <cmath>
 #include <numbers>
@@ -47,13 +45,11 @@ double CrossSpectrum::effectiveFrames() const noexcept
     return weightSq > 0.0 ? 0.5 * weightSum * weightSum / weightSq : 0.0;
 }
 
-dsp::cplx CrossSpectrum::transfer (int k, const Correction& c) const noexcept
+dsp::cplx CrossSpectrum::transfer (int k, const Correction& c, double shiftSamples) const noexcept
 {
-    const double w = omega (k);
-    auto t = (c.invert ? -1.0 : 1.0) * std::polar (1.0, -w * c.shiftSamples (fs));   // polar() wants a magnitude >= 0
-    if (c.rotate)
-        t *= dsp::AllpassCoeffs::make (c.rotateHz, c.rotateQ, fs).response (w);
-    return t;
+    // Every frequency above DC turns by the same angle; a shift adds a linear phase.
+    const double a = c.totalDeg() * std::numbers::pi / 180.0 - omega (k) * shiftSamples;
+    return k == 0 ? dsp::cplx (std::cos (c.totalDeg() * std::numbers::pi / 180.0), 0.0) : std::polar (1.0, a);
 }
 
 void CrossSpectrum::bands (const Correction* c, std::vector<Band>& out, int perOctave, double loHz, double hiHz) const
@@ -63,7 +59,7 @@ void CrossSpectrum::bands (const Correction* c, std::vector<Band>& out, int perO
     hiHz = std::min (hiHz, 0.5 * fs);
     const int count = (int) std::floor (std::log2 (hiHz / loHz) * perOctave);
     const double step = std::pow (2.0, 1.0 / perOctave);
-    const auto coeffs = c != nullptr && c->rotate ? dsp::AllpassCoeffs::make (c->rotateHz, c->rotateQ, fs) : dsp::AllpassCoeffs {};
+    const auto turn = c != nullptr ? std::polar (1.0, c->totalDeg() * std::numbers::pi / 180.0) : dsp::cplx (1.0, 0.0);
 
     float loudest = 0.f;
     for (int i = 0; i < count; ++i)
@@ -79,16 +75,10 @@ void CrossSpectrum::bands (const Correction* c, std::vector<Band>& out, int perO
         double mag = 0.0;
         for (int k = k0; k <= k1; ++k)
         {
-            auto v = sab[(size_t) k];
-            if (c != nullptr)
-            {
-                const double w = omega (k);
-                v *= (c->invert ? -1.0 : 1.0) * std::polar (1.0, -w * c->shiftSamples (fs));
-                if (c->rotate) v *= coeffs.response (w);
-            }
-            sum += v;
+            sum += sab[(size_t) k];
             mag += std::sqrt (saa[(size_t) k] * sbb[(size_t) k]);
         }
+        sum *= turn;
         Band b;
         b.hz = (float) std::sqrt (lo * hi);
         b.phaseDeg = (float) (std::arg (sum) * 180.0 / std::numbers::pi);
@@ -101,19 +91,23 @@ void CrossSpectrum::bands (const Correction* c, std::vector<Band>& out, int perO
         b.weight = loudest > 0.f && b.weight > 0.f ? std::clamp (1.f + 20.f * std::log10 (b.weight / loudest) / 60.f, 0.f, 1.f) : 0.f;
 }
 
-double CrossSpectrum::sumEnergy (const Correction& c, double loHz, double hiHz) const noexcept
+double CrossSpectrum::sumEnergy (const Correction& c, double loHz, double hiHz, double shiftSamples) const noexcept
 {
     const int k0 = std::max (1, (int) std::ceil (loHz * n / fs));
     const int k1 = std::min (numBins() - 1, (int) std::floor (hiHz * n / fs));
-    const auto coeffs = dsp::AllpassCoeffs::make (c.rotateHz, c.rotateQ, fs);
     double e = 0.0;
-    for (int k = k0; k <= k1; ++k)
+    if (std::abs (shiftSamples) < 1e-12)
     {
-        const double w = omega (k);
-        auto t = (c.invert ? -1.0 : 1.0) * std::polar (1.0, -w * c.shiftSamples (fs));   // polar() wants a magnitude >= 0
-        if (c.rotate) t *= coeffs.response (w);
-        e += saa[(size_t) k] + sbb[(size_t) k] + 2.0 * (sab[(size_t) k] * t).real();
+        dsp::cplx cross {};
+        for (int k = k0; k <= k1; ++k)
+        {
+            e += saa[(size_t) k] + sbb[(size_t) k];
+            cross += sab[(size_t) k];
+        }
+        return e + 2.0 * (cross * std::polar (1.0, c.totalDeg() * std::numbers::pi / 180.0)).real();
     }
+    for (int k = k0; k <= k1; ++k)
+        e += saa[(size_t) k] + sbb[(size_t) k] + 2.0 * (sab[(size_t) k] * transfer (k, c, shiftSamples)).real();
     return e;
 }
 

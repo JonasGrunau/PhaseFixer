@@ -8,7 +8,7 @@ namespace
     constexpr float kMinWeight = 0.02f;   // quieter bands aren't drawn
 }
 
-PhaseStrip::PhaseStrip (PhaseFuckerProcessor& p) : proc (p) {}
+PhaseStrip::PhaseStrip (PhaseFuckerProcessor& p) : proc (p) { setOpaque (true); }
 
 juce::Rectangle<float> PhaseStrip::plotArea() const
 {
@@ -29,8 +29,17 @@ void PhaseStrip::refresh()
         if (! before.empty()) { before.clear(); after.clear(); repaint(); }
         return;
     }
+    // Only when something new played or the correction moved.
+    const bool bypass = proc.isComparing();
+    const auto c = bypass ? pf::Correction {} : proc.correction();
+    if (live.revision() == seenRevision && bypass == shownBypass
+        && juce::exactlyEqual (c.phaseDeg, shown.phaseDeg) && c.invert == shown.invert)
+        return;
+    seenRevision = live.revision();
+    shown = c;
+    shownBypass = bypass;
+
     const auto& s = live.spectrum();
-    const auto c = proc.isComparing() ? pf::Correction {} : proc.correction();
     s.bands (nullptr, before);
     s.bands (&c, after);
     lowGainDb = (float) s.sumGainDb (c, 20.0, 300.0);
@@ -39,6 +48,12 @@ void PhaseStrip::refresh()
 
 void PhaseStrip::paint (juce::Graphics& g)
 {
+    paintOffscreen (g, getLocalBounds(), buffer, [this] (juce::Graphics& o) { draw (o); });
+}
+
+void PhaseStrip::draw (juce::Graphics& g)
+{
+    g.fillAll (col::paper);
     const auto plot = plotArea();
     const auto yOf = [&] (float deg) { return plot.getCentreY() - deg / 180.f * plot.getHeight() * 0.5f; };
 

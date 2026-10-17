@@ -67,6 +67,7 @@ Dial::Dial (juce::RangedAudioParameter& p, juce::String n, std::function<juce::S
     attachment.sendInitialUpdate();
     setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
     setRepaintsOnMouseActivity (false);
+    setOpaque (true);
 }
 
 juce::Rectangle<float> Dial::discArea() const
@@ -85,6 +86,7 @@ void Dial::resized()
 
 void Dial::paint (juce::Graphics& g)
 {
+    g.fillAll (col::paper);
     const auto area = discArea();
     const auto c = area.getCentre();
     const float R = area.getWidth() * 0.5f;
@@ -95,17 +97,23 @@ void Dial::paint (juce::Graphics& g)
     const auto angle = [] (float t) { return juce::MathConstants<float>::pi * (-0.75f + 1.5f * t); };
     const auto at = [&] (float a, float r) { return juce::Point<float> (c.x + r * std::sin (a), c.y - r * std::cos (a)); };
 
-    // Tick ring: the span between origin and value is inked.
+    // Tick ring: the span between origin and value is inked. Two paths, two strokes.
     constexpr int kTicks = 40;
+    juce::Path lit, unlit;
     for (int i = 0; i <= kTicks; ++i)
     {
         const float t = (float) i / kTicks;
         const bool major = i % 10 == 0;
-        const bool lit = (t >= std::min (origin, norm) - 1e-4f && t <= std::max (origin, norm) + 1e-4f);
-        g.setColour (lit ? ink : col::hairline);
+        const bool on = (t >= std::min (origin, norm) - 1e-4f && t <= std::max (origin, norm) + 1e-4f);
         const float a = angle (t);
-        g.drawLine ({ at (a, R * (major ? 0.80f : 0.84f)), at (a, R * 0.97f) }, major ? 1.2f : 1.f);
+        auto& p = on ? lit : unlit;
+        p.startNewSubPath (at (a, R * (major ? 0.78f : 0.84f)));
+        p.lineTo (at (a, R * 0.97f));
     }
+    g.setColour (col::hairline);
+    g.strokePath (unlit, juce::PathStrokeType (1.f));
+    g.setColour (ink);
+    g.strokePath (lit, juce::PathStrokeType (1.1f));
 
     // Disc.
     const float rd = R * 0.68f;
@@ -212,10 +220,12 @@ Key::Key (juce::RangedAudioParameter& p, juce::String t, float h)
 {
     attachment.sendInitialUpdate();
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    setOpaque (true);
 }
 
 void Key::paint (juce::Graphics& g)
 {
+    g.fillAll (col::paper);
     const auto r = getLocalBounds().toFloat().reduced (0.5f);
     const auto fill = accentWhenOn ? col::accent : col::ink;
     if (on)
@@ -251,6 +261,7 @@ void AlignKey::setLook (Look l, float p)
 
 void AlignKey::paint (juce::Graphics& g)
 {
+    g.fillAll (col::paper);
     auto r = getLocalBounds().toFloat().reduced (0.5f);
     if (isMouseButtonDown()) r = r.translated (0.f, 1.f);
     const bool hover = isMouseOver();
@@ -344,7 +355,15 @@ void LevelMeter::push (float peak)
     levelDb = std::max (db, levelDb - 1.5f);
     if (db >= holdDb) { holdDb = db; holdTicks = 45; }
     else if (--holdTicks <= 0) holdDb = std::max (-100.f, holdDb - 1.5f);
-    repaint();
+
+    // Below the scale nothing shows; otherwise a quarter dB is a pixel or less.
+    const float lv = std::max (levelDb, -61.f), hv = std::max (holdDb, -61.f);
+    if (std::abs (lv - shownLevel) > 0.25f || std::abs (hv - shownHold) > 0.25f)
+    {
+        shownLevel = lv;
+        shownHold = hv;
+        repaint();
+    }
 }
 
 void LevelMeter::setMissing (bool m, juce::String why)
@@ -357,6 +376,7 @@ void LevelMeter::setMissing (bool m, juce::String why)
 
 void LevelMeter::paint (juce::Graphics& g)
 {
+    g.fillAll (col::paper);
     auto b = getLocalBounds().toFloat();
     auto top = b.removeFromTop (13.f);
     caption (g, name, top, juce::Justification::centredLeft, col::ink, 9.5f);
@@ -398,51 +418,11 @@ void LevelMeter::paint (juce::Graphics& g)
         g.fillRect (juce::Rectangle<float> (x (db) - 0.5f, bar.getBottom() + 1.5f, 1.f, 3.f));
 }
 
-// ---- LookaheadField ----------------------------------------------------------------------
-
-void LookaheadField::set (int m, double effectiveMs, bool c)
-{
-    if (m == mode && juce::exactlyEqual (effectiveMs, ms) && c == clamped) return;
-    mode = m;
-    ms = effectiveMs;
-    clamped = c;
-    repaint();
-}
-
-void LookaheadField::paint (juce::Graphics& g)
-{
-    auto b = getLocalBounds().toFloat();
-    caption (g, "Lookahead", b.removeFromTop (13.f), juce::Justification::centredLeft, col::inkSoft, 9.5f);
-    const auto msText = juce::String ((int) ms) + " ms";
-    const auto value = mode < 0 ? "AUTO " + juce::String (juce::CharPointer_UTF8 ("\xc2\xb7 ")) + msText : msText;
-    g.setColour (clamped ? col::accent : col::ink);
-    g.setFont (mono (11.f));
-    const auto row = b.removeFromTop (16.f);
-    g.drawText (value + (clamped ? "  !" : ""), row, juce::Justification::centredLeft, false);
-    // Dotted underline: it opens a menu.
-    const float w = textWidth (g.getCurrentFont(), value);
-    for (float x = row.getX(); x < row.getX() + w; x += 3.f)
-        g.fillRect (x, row.getBottom() - 1.f, isMouseOver() ? 2.f : 1.f, 1.f);
-}
-
-void LookaheadField::mouseUp (const juce::MouseEvent&)
-{
-    juce::PopupMenu m;
-    m.addItem (1, "Auto", true, mode < 0);
-    m.addSeparator();
-    const double tiers[] = { 0.0, 5.0, 10.0, 20.0, 50.0 };
-    for (int i = 0; i < 5; ++i)
-        m.addItem (i + 2, juce::String ((int) tiers[i]) + " ms", true, mode == i);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMinimumWidth (110),
-                     [safe = juce::Component::SafePointer<LookaheadField> (this)] (int r) {
-                         if (safe != nullptr && r > 0 && safe->onChoose) safe->onChoose (r == 1 ? -1 : r - 2);
-                     });
-}
-
 // ---- TextLink ----------------------------------------------------------------------------
 
 void TextLink::paint (juce::Graphics& g)
 {
+    g.fillAll (col::paper);
     const auto b = getLocalBounds().toFloat();
     caption (g, text, b, juce::Justification::centredLeft, isMouseOver() ? col::ink : col::inkSoft, 9.5f);
     g.setFont (label (9.5f));

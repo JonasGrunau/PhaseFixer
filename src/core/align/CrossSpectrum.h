@@ -12,7 +12,8 @@ namespace pf
 // S_aa, S_bb over frames. Everything the analyzer decides and everything the
 // phase display shows is computed from these, for any correction, without
 // touching the audio again: correcting the track multiplies S_ab by the
-// correction's transfer function.
+// correction's transfer function (for a rotation, e^{j phi} at every
+// frequency above DC).
 class CrossSpectrum
 {
 public:
@@ -32,8 +33,9 @@ public:
     // makes neighbours share half their information).
     double effectiveFrames() const noexcept;
 
-    // Transfer function of a correction at bin k.
-    dsp::cplx transfer (int k, const Correction& c) const noexcept;
+    // Transfer function of a correction at bin k, optionally with the track
+    // also moved by `shiftSamples` (positive = later), for what-ifs.
+    dsp::cplx transfer (int k, const Correction& c, double shiftSamples = 0.0) const noexcept;
 
     // Display bands (log spaced). Phase of the track relative to the reference
     // in degrees (+ = track ahead), and how well the two add up in that band
@@ -48,8 +50,9 @@ public:
     void bands (const Correction* c, std::vector<Band>& out, int perOctave = 6,
                 double loHz = 20.0, double hiHz = 20000.0) const;
 
-    // Energy of reference + corrected track in [lo, hi] (arbitrary units).
-    double sumEnergy (const Correction& c, double loHz, double hiHz) const noexcept;
+    // Energy of reference + corrected track in [lo, hi] (arbitrary units),
+    // optionally with the track also moved by `shiftSamples`.
+    double sumEnergy (const Correction& c, double loHz, double hiHz, double shiftSamples = 0.0) const noexcept;
     // How much louder (dB) reference + corrected track sums in [lo, hi] than
     // reference + uncorrected track.
     double sumGainDb (const Correction& c, double loHz, double hiHz) const noexcept;

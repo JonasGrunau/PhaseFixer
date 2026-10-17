@@ -1,7 +1,6 @@
 #include "TestUtil.h"
-#include "dsp/Allpass.h"
 #include "dsp/Fft.h"
-#include "dsp/FractionalDelay.h"
+#include "dsp/Hilbert.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -47,75 +46,27 @@ TEST_CASE ("Two real spectra from one complex FFT", "[dsp]")
     }
 }
 
-TEST_CASE ("Sinc delay is exact for whole samples", "[dsp]")
+TEST_CASE ("Hilbert FIR: 90 degrees, flat from 20 Hz to Nyquist - 20 Hz", "[dsp]")
 {
-    const auto x = testutil::noise (2000, 0.5, 4);
-    for (int d : { 32, 33, 100, 517 })
+    for (double fs : { 44100.0, 48000.0, 96000.0 })
     {
-        DelayLine line;
-        line.prepare (600);
-        Sinc::Taps t;
-        Sinc::make (d, t);
-        for (int i = 0; i < (int) x.size(); ++i)
+        const int c = Hilbert::halfLength (fs);
+        const auto h = Hilbert::design (c);
+        REQUIRE ((int) h.size() == 2 * c + 1);
+        CHECK (h[(size_t) c] == 0.f);
+        for (int k = 1; k <= c; ++k)
+            REQUIRE (h[(size_t) (c + k)] == -h[(size_t) (c - k)]);   // antisymmetric: linear phase
+
+        // Response with the centre delay removed: should be -j (a 90 degree lag) at every frequency.
+        for (double hz : { 20.0, 30.0, 60.0, 1000.0, 10000.0, fs / 2 - 30.0 })
         {
-            line.push (x[(size_t) i]);
-            const float y = line.read (t);
-            if (i >= d) REQUIRE (y == x[(size_t) (i - d)]);
+            const double w = 2.0 * std::numbers::pi * hz / fs;
+            cplx r {};
+            for (int k = -c; k <= c; ++k)
+                r += (double) h[(size_t) (c + k)] * std::polar (1.0, -w * k);
+            INFO (fs << " Hz rate, " << hz << " Hz: " << 20.0 * std::log10 (std::abs (r)) << " dB, " << std::arg (r) * 180.0 / std::numbers::pi << " deg");
+            CHECK (std::abs (20.0 * std::log10 (std::abs (r))) < (hz < 25.0 ? 0.3 : 0.05));
+            CHECK_THAT (std::arg (r), WithinAbs (-std::numbers::pi / 2, 1e-9));
         }
     }
-}
-
-TEST_CASE ("Sinc delay: fractional phase and flat response", "[dsp]")
-{
-    const double fs = 48000.0;
-    for (double frac : { 0.25, 0.5, 0.731 })
-        for (double hz : { 100.0, 1000.0, 8000.0, 16000.0 })
-        {
-            const double d = 40.0 + frac;
-            DelayLine line;
-            line.prepare (100);
-            Sinc::Taps t;
-            Sinc::make (d, t);
-            double err = 0.0, ein = 0.0, eout = 0.0;
-            const int n = 9600;
-            for (int i = 0; i < n; ++i)
-            {
-                line.push ((float) std::sin (2.0 * std::numbers::pi * hz * i / fs));
-                const double y = line.read (t);
-                if (i > 200)
-                {
-                    const double want = std::sin (2.0 * std::numbers::pi * hz * (i - d) / fs);
-                    err += (y - want) * (y - want);
-                    ein += want * want;
-                    eout += y * y;
-                }
-            }
-            INFO (frac << " @ " << hz << " Hz");
-            const double gainDb = 10.0 * std::log10 (eout / ein);
-            CHECK_THAT (gainDb, WithinAbs (0.0, hz <= 8000.0 ? 0.01 : 0.15));
-            CHECK (10.0 * std::log10 (err / ein) < (hz <= 8000.0 ? -60.0 : -25.0));
-        }
-}
-
-TEST_CASE ("Allpass: unity magnitude, -180 degrees at f0, process matches response", "[dsp]")
-{
-    const double fs = 48000.0, f0 = 300.0;
-    const auto k = AllpassCoeffs::make (f0, 0.9, fs);
-    for (double hz : { 20.0, 100.0, 1000.0, 10000.0 })
-        CHECK_THAT (std::abs (k.response (2.0 * std::numbers::pi * hz / fs)), WithinAbs (1.0, 1e-9));
-    CHECK_THAT (std::abs (std::arg (k.response (2.0 * std::numbers::pi * f0 / fs))), WithinAbs (std::numbers::pi, 1e-6));
-
-    // A sine through process() comes out with the phase response() predicts.
-    const double hz = 450.0;
-    Allpass ap;
-    ap.setCoeffs (k);
-    const auto h = k.response (2.0 * std::numbers::pi * hz / fs);
-    double err = 0.0;
-    for (int i = 0; i < 48000; ++i)
-    {
-        const double y = ap.process ((float) std::sin (2.0 * std::numbers::pi * hz * i / fs));
-        if (i > 4800)
-            err = std::max (err, std::abs (y - std::abs (h) * std::sin (2.0 * std::numbers::pi * hz * i / fs + std::arg (h))));
-    }
-    CHECK (err < 1e-4);
 }

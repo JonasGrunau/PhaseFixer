@@ -2,17 +2,6 @@
 
 #include "PluginEditor.h"
 
-namespace
-{
-    juce::NormalisableRange<float> logRange (float lo, float hi)
-    {
-        return { lo, hi,
-                 [] (float a, float b, float t) { return a * std::pow (b / a, t); },
-                 [] (float a, float b, float v) { return std::log (v / a) / std::log (b / a); },
-                 [] (float a, float b, float v) { return juce::jlimit (a, b, v); } };
-    }
-} // namespace
-
 PhaseFuckerProcessor::PhaseFuckerProcessor()
     : AudioProcessor (BusesProperties()
                           .withInput ("Input", juce::AudioChannelSet::stereo(), true)
@@ -20,24 +9,18 @@ PhaseFuckerProcessor::PhaseFuckerProcessor()
                           .withInput ("Reference", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PhaseFucker", createLayout())
 {
-    shiftParam = apvts.getRawParameterValue (ids::shift);
+    phaseParam = apvts.getRawParameterValue (ids::phase);
     invertParam = apvts.getRawParameterValue (ids::invert);
-    rotateParam = apvts.getRawParameterValue (ids::rotate);
-    rotateFreqParam = apvts.getRawParameterValue (ids::rotateFreq);
-    rotateQParam = apvts.getRawParameterValue (ids::rotateQ);
     compareParam = apvts.getRawParameterValue (ids::compare);
-    apvts.addParameterListener (ids::shift, this);
 
     capture.prepare (48000.0);
-    aligner.prepare (48000.0, 2);
+    rotator.prepare (48000.0, 2);
+    setLatencySamples (rotator.latency());
     worker.startThread (juce::Thread::Priority::low);
-    startTimerHz (10);
 }
 
 PhaseFuckerProcessor::~PhaseFuckerProcessor()
 {
-    stopTimer();
-    apvts.removeParameterListener (ids::shift, this);
     worker.signalThreadShouldExit();
     worker.notify();
     worker.stopThread (4000);
@@ -46,28 +29,13 @@ PhaseFuckerProcessor::~PhaseFuckerProcessor()
 juce::AudioProcessorValueTreeState::ParameterLayout PhaseFuckerProcessor::createLayout()
 {
     using namespace juce;
-    const auto ms = [] (float v, int) {
-        return String (v, std::abs (v) < 10.f ? 3 : 2) + " ms";
-    };
-    const auto hz = [] (float v, int) {
-        return v < 1000.f ? (v < 100.f ? String (v, 1) : String (roundToInt (v))) + " Hz" : String (v / 1000.f, 2) + " kHz";
-    };
-
     AudioProcessorValueTreeState::ParameterLayout layout;
     layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { ids::shift, 1 }, "Shift",
-        NormalisableRange<float> (-(float) pf::limits::kMaxShiftMs, (float) pf::limits::kMaxShiftMs, 0.f, 0.35f, true), 0.f,
-        AudioParameterFloatAttributes().withLabel ("ms").withStringFromValueFunction (ms)));
+        ParameterID { ids::phase, 2 }, "Phase",
+        NormalisableRange<float> (-(float) pf::limits::kMaxPhaseDeg, (float) pf::limits::kMaxPhaseDeg), 0.f,
+        AudioParameterFloatAttributes().withLabel (CharPointer_UTF8 ("\xc2\xb0"))
+            .withStringFromValueFunction ([] (float v, int) { return String (v, 1) + String (CharPointer_UTF8 ("\xc2\xb0")); })));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ids::invert, 1 }, "Polarity", false));
-    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ids::rotate, 1 }, "Rotate", false));
-    layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { ids::rotateFreq, 1 }, "Rotate Freq",
-        logRange ((float) pf::limits::kMinRotateHz, (float) pf::limits::kMaxRotateHz), 200.f,
-        AudioParameterFloatAttributes().withLabel ("Hz").withStringFromValueFunction (hz)));
-    layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { ids::rotateQ, 1 }, "Rotate Q",
-        logRange ((float) pf::limits::kMinRotateQ, (float) pf::limits::kMaxRotateQ), 0.7f,
-        AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (v, 2); })));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ids::compare, 1 }, "Compare", false));
     return layout;
 }
@@ -75,11 +43,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout PhaseFuckerProcessor::create
 pf::Correction PhaseFuckerProcessor::correction() const noexcept
 {
     pf::Correction c;
-    c.shiftMs = shiftParam->load (std::memory_order_relaxed);
+    c.phaseDeg = phaseParam->load (std::memory_order_relaxed);
     c.invert = invertParam->load (std::memory_order_relaxed) > 0.5f;
-    c.rotate = rotateParam->load (std::memory_order_relaxed) > 0.5f;
-    c.rotateHz = rotateFreqParam->load (std::memory_order_relaxed);
-    c.rotateQ = rotateQParam->load (std::memory_order_relaxed);
     return c;
 }
 
@@ -108,9 +73,9 @@ void PhaseFuckerProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
         const juce::ScopedWriteLock l (captureLock);
         capture.prepare (sampleRate);
     }
-    aligner.prepare (sampleRate, std::max (1, getMainBusNumInputChannels()));
+    rotator.prepare (sampleRate, std::max (1, getMainBusNumInputChannels()));
     mono.setSize (2, std::max (1, samplesPerBlock));
-    setLatencySamples (pf::Aligner::latencyFor (getLookaheadMs(), sampleRate));
+    setLatencySamples (rotator.latency());
 }
 
 void PhaseFuckerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
@@ -149,9 +114,8 @@ void PhaseFuckerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     if (pr > refPeak.load (std::memory_order_relaxed)) refPeak.store (pr, std::memory_order_relaxed);
     if (pt > trkPeak.load (std::memory_order_relaxed)) trkPeak.store (pt, std::memory_order_relaxed);
 
-    aligner.setTarget (correction(), lookaheadMs.load (std::memory_order_relaxed), isComparing());
-    shiftClamped.store (aligner.isShiftClamped(), std::memory_order_relaxed);
-    aligner.process (main.getArrayOfWritePointers(), main.getNumChannels(), n);
+    rotator.setTarget (correction(), isComparing());
+    rotator.process (main.getArrayOfWritePointers(), main.getNumChannels(), n);
 
     for (int c = getTotalNumInputChannels(); c < getTotalNumOutputChannels(); ++c)
         buffer.clear (c, 0, n);
@@ -287,68 +251,16 @@ void PhaseFuckerProcessor::setParam (const char* id, float plainValue)
 
 void PhaseFuckerProcessor::applyResult (const pf::AlignResult& r)
 {
-    const auto& c = r.correction;
     setParam (ids::compare, 0.f);
-    setParam (ids::shift, (float) c.shiftMs);
-    setParam (ids::invert, c.invert ? 1.f : 0.f);
-    setParam (ids::rotate, c.rotate ? 1.f : 0.f);
-    if (c.rotate)
-    {
-        setParam (ids::rotateFreq, (float) c.rotateHz);
-        setParam (ids::rotateQ, (float) c.rotateQ);
-    }
-    updateLookahead();
+    setParam (ids::phase, (float) r.correction.phaseDeg);
+    setParam (ids::invert, r.correction.invert ? 1.f : 0.f);
 }
 
 void PhaseFuckerProcessor::resetCorrection()
 {
-    setParam (ids::shift, 0.f);
+    setParam (ids::phase, 0.f);
     setParam (ids::invert, 0.f);
-    setParam (ids::rotate, 0.f);
     setParam (ids::compare, 0.f);
-    updateLookahead();
-}
-
-// ---- Lookahead ----------------------------------------------------------------------
-
-void PhaseFuckerProcessor::setLookaheadMode (int m)
-{
-    lookaheadMode = juce::jlimit (kAuto, (int) kLookaheadTiers.size() - 1, m);
-    updateLookahead();
-}
-
-void PhaseFuckerProcessor::updateLookahead()
-{
-    shiftPending = false;
-    double ms = 0.0;
-    if (lookaheadMode == kAuto)
-    {
-        const double need = -shiftParam->load();
-        ms = kLookaheadTiers.back();
-        for (double t : kLookaheadTiers)
-            if (t >= need - 1e-6) { ms = t; break; }
-    }
-    else
-        ms = kLookaheadTiers[(size_t) lookaheadMode];
-
-    if (! juce::exactlyEqual (ms, lookaheadMs.load()))
-    {
-        lookaheadMs = ms;
-        setLatencySamples (pf::Aligner::latencyFor (ms, getRate()));
-    }
-}
-
-void PhaseFuckerProcessor::parameterChanged (const juce::String&, float)
-{
-    // May come from the audio thread (automation): just note the time.
-    shiftMovedAt = juce::Time::getMillisecondCounter();
-    shiftPending = true;
-}
-
-void PhaseFuckerProcessor::timerCallback()
-{
-    if (shiftPending && lookaheadMode == kAuto && juce::Time::getMillisecondCounter() - shiftMovedAt.load() > 300)
-        updateLookahead();
 }
 
 // ---- State -------------------------------------------------------------------------
@@ -356,21 +268,20 @@ void PhaseFuckerProcessor::timerCallback()
 void PhaseFuckerProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto tree = apvts.copyState();
-    tree.setProperty ("lookahead", lookaheadMode, nullptr);
     const auto st = getAlignState();
     if (st.hasResult)
     {
         juce::ValueTree res ("Result");
         res.setProperty ("status", (int) st.result.status, nullptr);
-        res.setProperty ("shiftMs", st.result.correction.shiftMs, nullptr);
+        res.setProperty ("phaseDeg", st.result.correction.phaseDeg, nullptr);
         res.setProperty ("invert", st.result.correction.invert, nullptr);
-        res.setProperty ("rotate", st.result.correction.rotate, nullptr);
-        res.setProperty ("rotateHz", st.result.correction.rotateHz, nullptr);
-        res.setProperty ("rotateQ", st.result.correction.rotateQ, nullptr);
         res.setProperty ("confidence", st.result.confidence, nullptr);
         res.setProperty ("coherence", st.result.coherence, nullptr);
         res.setProperty ("lowEndGainDb", st.result.lowEndGainDb, nullptr);
-        res.setProperty ("rotateGainDb", st.result.rotateGainDb, nullptr);
+        res.setProperty ("sumGainDb", st.result.sumGainDb, nullptr);
+        res.setProperty ("hasOffset", st.result.hasOffset, nullptr);
+        res.setProperty ("offsetSamples", st.result.offsetSamples, nullptr);
+        res.setProperty ("timeFixDb", st.result.timeFixDb, nullptr);
         tree.removeChild (tree.getChildWithName ("Result"), nullptr);
         tree.appendChild (res, nullptr);
     }
@@ -383,7 +294,6 @@ void PhaseFuckerProcessor::setStateInformation (const void* data, int sizeInByte
     const auto xml = getXmlFromBinary (data, sizeInBytes);
     if (xml == nullptr || ! xml->hasTagName (apvts.state.getType())) return;
     auto tree = juce::ValueTree::fromXml (*xml);
-    lookaheadMode = juce::jlimit (kAuto, (int) kLookaheadTiers.size() - 1, (int) tree.getProperty ("lookahead", kAuto));
     const auto res = tree.getChildWithName ("Result");
     tree.removeChild (res, nullptr);
     apvts.replaceState (tree);
@@ -393,21 +303,20 @@ void PhaseFuckerProcessor::setStateInformation (const void* data, int sizeInByte
         const juce::ScopedLock sl (stateLock);
         auto& r = state.result;
         r.status = (pf::AlignStatus) (int) res.getProperty ("status");
-        r.correction.shiftMs = res.getProperty ("shiftMs");
+        r.correction.phaseDeg = res.getProperty ("phaseDeg");
         r.correction.invert = res.getProperty ("invert");
-        r.correction.rotate = res.getProperty ("rotate");
-        r.correction.rotateHz = res.getProperty ("rotateHz");
-        r.correction.rotateQ = res.getProperty ("rotateQ");
         r.confidence = res.getProperty ("confidence");
         r.coherence = res.getProperty ("coherence");
         r.lowEndGainDb = res.getProperty ("lowEndGainDb");
-        r.rotateGainDb = res.getProperty ("rotateGainDb");
+        r.sumGainDb = res.getProperty ("sumGainDb");
+        r.hasOffset = res.getProperty ("hasOffset");
+        r.offsetSamples = res.getProperty ("offsetSamples");
+        r.timeFixDb = res.getProperty ("timeFixDb");
         state.hasResult = true;
         state.stage = Stage::done;
         state.hitSample = -1;
         state.finishedAt = 0;
     }
-    updateLookahead();
 }
 
 juce::AudioProcessorEditor* PhaseFuckerProcessor::createEditor() { return new PhaseFuckerEditor (*this); }

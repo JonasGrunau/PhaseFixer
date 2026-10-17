@@ -1,7 +1,6 @@
 #include "Analyzer.h"
 
 #include "CrossSpectrum.h"
-#include "dsp/Allpass.h"
 #include "dsp/Fft.h"
 
 #include <algorithm>
@@ -42,6 +41,18 @@ namespace
         const double lo = 1.0 / (1.0 + std::pow (45.0 / std::max (hz, 1.0), 4.0));
         const double hi = 0.3 + 0.7 / (1.0 + std::pow (hz / 2500.0, 2.0));
         return lo * hi;
+    }
+
+    // What the rotation aims for: correlation near 1 below ~1 kHz (PHA-979's
+    // rule of thumb), the highs only nudging. Per octave, not per bin (there
+    // are ten times more bins in 300 Hz-3 kHz than in 30-300 Hz), so the
+    // 1 / f.
+    double focusWeight (double hz)
+    {
+        hz = std::max (hz, 1.0);
+        const double lo = 1.0 / (1.0 + std::pow (30.0 / hz, 4.0));
+        const double hi = 0.08 + 0.92 / (1.0 + std::pow (hz / 1000.0, 4.0));
+        return lo * hi * 100.0 / hz;
     }
 
     // Analysis band with raised-cosine edges a third of an octave wide.
@@ -319,93 +330,6 @@ namespace
         }
     }
 
-    struct Rotation
-    {
-        bool found = false;
-        double hz = 0.0, q = 0.0, tau = 0.0, cosine = 0.0;
-        int sign = 1;
-    };
-
-    // Best allpass + residual shift for the (pre-shifted) spectrum: for each
-    // frequency x Q on a grid the correlation through the allpass comes from
-    // one inverse FFT, then the winner is polished by coordinate search.
-    Rotation fitRotation (const Input& in, const std::vector<cplx>& energy, double norm, double tau0, int maxLag)
-    {
-        const int N = in.fftSize;
-        const double fs = in.fs;
-        Rotation best;
-        std::vector<cplx> z ((size_t) N), resp ((size_t) N / 2 + 1);
-
-        const auto through = [&] (double hz, double q, std::vector<cplx>& out) {
-            const auto c = dsp::AllpassCoeffs::make (hz, q, fs);
-            out.assign ((size_t) N / 2 + 1, {});
-            for (int k = in.k0; k <= in.k1; ++k)
-                out[(size_t) k] = energy[(size_t) k] * c.response (2.0 * kPi * k / N);
-        };
-
-        constexpr std::array<double, 5> qs { 0.5, 0.71, 1.0, 1.6, 2.6 };
-        const double hiHz = std::min (8000.0, 0.4 * fs);
-        constexpr int kFreqs = 40;
-        for (int fi = 0; fi < kFreqs; ++fi)
-        {
-            const double hz = 25.0 * std::pow (hiHz / 25.0, fi / (kFreqs - 1.0));
-            for (double q : qs)
-            {
-                through (hz, q, resp);
-                std::fill (z.begin(), z.end(), cplx {});
-                for (int k = in.k0; k <= in.k1; ++k)
-                {
-                    z[(size_t) k] = resp[(size_t) k];
-                    z[(size_t) (N - k)] = std::conj (resp[(size_t) k]);
-                }
-                in.fft.inverse (z.data());
-
-                // The allpass delays the low end by up to 2 / (w0 Q): allow the
-                // shift to move that far to make up for it.
-                const double gd = 2.0 / (2.0 * kPi * hz / fs * q);
-                const int reach = (int) std::ceil (std::min ((double) maxLag, 2.0 + 1.5 * gd));
-                const int c0 = (int) std::lround (tau0);
-                int bestLag = c0;
-                double bestV = -1.0;
-                for (int lag = c0 - reach; lag <= c0 + reach; ++lag)
-                    if (const double v = std::abs (z[(size_t) ((lag % N + N) % N)].real()); v > bestV)
-                    {
-                        bestV = v;
-                        bestLag = lag;
-                    }
-                const auto val = [&] (int lag) { return std::abs (z[(size_t) ((lag % N + N) % N)].real()); };
-                const double tau = bestLag + parabola (val (bestLag - 1), val (bestLag), val (bestLag + 1));
-                const double j = sweep (resp, in.k0, in.k1, tau, N);
-                const double cosine = std::abs (j) / norm;
-                if (cosine > best.cosine)
-                    best = { true, hz, q, tau, cosine, j < 0.0 ? -1 : 1 };
-            }
-        }
-        if (! best.found) return best;
-
-        // Polish: frequency and Q in shrinking log steps, re-fitting the shift each time.
-        const auto score = [&] (double hz, double q, double tauGuess, double& tauOut, int& signOut) {
-            through (hz, q, resp);
-            tauOut = refine (resp, in.k0, in.k1, N, tauGuess, 1.0, 0.05);
-            const double j = sweep (resp, in.k0, in.k1, tauOut, N);
-            signOut = j < 0.0 ? -1 : 1;
-            return std::abs (j) / norm;
-        };
-        double stepF = 0.12, stepQ = 0.2;
-        for (int iter = 0; iter < 6; ++iter, stepF *= 0.5, stepQ *= 0.5)
-            for (int dim = 0; dim < 2; ++dim)
-                for (int dir : { -1, 1 })
-                {
-                    const double hz = dim == 0 ? best.hz * std::exp (dir * stepF) : best.hz;
-                    const double q = dim == 1 ? best.q * std::exp (dir * stepQ) : best.q;
-                    if (hz < limits::kMinRotateHz || hz > hiHz || q < limits::kMinRotateQ || q > limits::kMaxRotateQ) continue;
-                    double tau;
-                    int sign;
-                    if (const double c = score (hz, q, best.tau, tau, sign); c > best.cosine)
-                        best = { true, hz, q, tau, c, sign };
-                }
-        return best;
-    }
 } // namespace
 
 AlignResult analyze (const float* ref, const float* trk, int n, const AnalyzerSettings& st)
@@ -446,31 +370,67 @@ AlignResult analyze (const float* ref, const float* trk, int n, const AnalyzerSe
         in.limit[(size_t) k] = bandLimit (k * fs / N);
     in.lagBias = windowOverlap (in.window, N / 4 + 2);
 
-    // ---- Pass 1: where is it? ------------------------------------------------
-    CrossSpectrum spec1;
+    CrossSpectrum spec;
     const int perSegment = std::max (3, (int) std::lround (fs / in.hop));
-    const auto f1 = accumulate (in, 0, spec1, perSegment);
-    res.activeSeconds = f1.seconds;
-    if (f1.used == 0 || f1.seconds < st.minSeconds) { res.status = AlignStatus::notEnoughSignal; return res; }
+    const auto frames = accumulate (in, 0, spec, perSegment);
+    res.activeSeconds = frames.seconds;
+    if (frames.used == 0 || frames.seconds < st.minSeconds) { res.status = AlignStatus::notEnoughSignal; return res; }
 
-    const auto coh1 = coherence (spec1);
-    const auto r = gcc (in, spec1.sab, coh1);
-    const auto lags = peakLags (in, r, maxLag, 5);
-    if (lags.empty()) { res.status = AlignStatus::unrelated; return res; }
+    const auto coh = coherence (spec);
 
-    // A clearly stronger peak beyond the range (but inside the frame) means
-    // the real delay is longer than we may correct.
-    bool beyondRange = false;
+    // ---- Rotation ---------------------------------------------------------------
+    // Summed energy with the track turned by phi is
+    //     sum (S_aa + S_bb) + 2 Re (e^{j phi} sum W S_ab),
+    // largest at phi = -arg (sum W S_ab).
+    std::vector<double> weight ((size_t) spec.numBins(), 0.0);
+    cplx z {};
+    double norm = 0.0, cohMean = 0.0, cohWeight = 0.0;
+    for (int k = in.k0; k <= in.k1; ++k)
     {
-        const double inside = std::abs (at (r, lags.front())) / overlapAt (in, lags.front());
-        for (int lag = maxLag + 1; lag <= N / 4 && ! beyondRange; ++lag)
-            for (int l : { lag, -lag })
-                if (std::abs (at (r, l)) / overlapAt (in, l) > 1.25 * inside)
-                    beyondRange = true;
+        const double hz = spec.binHz (k);
+        const double w = focusWeight (hz) * in.limit[(size_t) k] * coh[(size_t) k];
+        const double mag = std::sqrt (spec.saa[(size_t) k] * spec.sbb[(size_t) k]);
+        weight[(size_t) k] = w;
+        z += w * spec.sab[(size_t) k];
+        norm += w * mag;
+        const double cw = hearingWeight (hz) * in.limit[(size_t) k] * mag;
+        cohMean += cw * coh[(size_t) k];
+        cohWeight += cw;
+    }
+    cohMean = cohWeight > 0.0 ? cohMean / cohWeight : 0.0;
+    res.coherence = (float) cohMean;
+
+    const double turnDeg = std::abs (z) > 0.0 ? -std::arg (z) * 180.0 / kPi : 0.0;
+    res.correction = Correction::fromTotal (turnDeg);
+    // ~1 when one angle lines the shared part up everywhere that counts.
+    const double fit = norm > 0.0 ? std::abs (z) / norm : 0.0;
+
+    // Do ~1 s stretches land on the same angle on their own?
+    double agreement = 0.7;
+    if (frames.segments.size() >= 2)
+    {
+        cplx unit {};
+        double total = 0.0;
+        for (const auto& seg : frames.segments)
+        {
+            cplx zs {};
+            for (int k = in.k0; k <= in.k1; ++k)
+                zs += weight[(size_t) k] * seg[(size_t) k];
+            if (std::abs (zs) <= 0.0) continue;
+            unit += zs / std::abs (zs) * std::sqrt (std::abs (zs));
+            total += std::sqrt (std::abs (zs));
+        }
+        if (total > 0.0) agreement = std::abs (unit) / total;
     }
 
-    // Peak sharpness: the main peak over the RMS of the rest of the range.
+    res.lowEndGainDb = (float) spec.sumGainDb (res.correction, 20.0, 300.0);
+    res.sumGainDb = (float) spec.sumGainDb (res.correction, 20.0, 20000.0);
+
+    // ---- Time anchor ------------------------------------------------------------
+    const auto r = gcc (in, spec.sab, coh);
+    const auto lags = peakLags (in, r, maxLag, 5);
     double psrDb = 0.0;
+    if (! lags.empty())
     {
         const double peak = std::abs (at (r, lags.front())) / overlapAt (in, lags.front());
         double acc = 0.0;
@@ -483,125 +443,43 @@ AlignResult analyze (const float* ref, const float* trk, int n, const AnalyzerSe
                 ++cnt;
             }
         psrDb = cnt > 0 && acc > 0.0 ? 20.0 * std::log10 (peak / std::sqrt (acc / cnt)) : 60.0;
-    }
 
-    std::vector<cplx> energy, sharp;
-    double norm = 0.0;
-    sweepVectors (in, spec1, coh1, energy, sharp, norm);
-
-    // Each candidate refined, then judged by how it sums.
-    Candidate best;
-    for (int lag : lags)
-    {
-        Candidate c;
-        c.tau = refine (sharp, in.k0, in.k1, N, lag, 1.5, 0.05);
-        const double j = sweep (energy, in.k0, in.k1, c.tau, N);
-        c.sign = j < 0.0 ? -1 : 1;
-        c.score = std::abs (j) / overlapAt (in, c.tau);
-        if (c.score > best.score) best = c;
-    }
-
-    // ---- Pass 2: track frames pre-shifted by the winner ---------------------------
-    int offset = (int) std::lround (best.tau);
-    CrossSpectrum spec2;
-    auto f2 = accumulate (in, offset, spec2, 0);
-    if (f2.used == 0)
-    {
-        offset = 0;
-        f2 = accumulate (in, 0, spec2, 0);
-    }
-    const auto coh2 = coherence (spec2);
-    sweepVectors (in, spec2, coh2, energy, sharp, norm);
-
-    double residual = refine (sharp, in.k0, in.k1, N, best.tau - offset, 1.0, 0.02);
-    double j2 = sweep (energy, in.k0, in.k1, residual, N);
-    int sign = j2 < 0.0 ? -1 : 1;
-    const double cosine0 = norm > 0.0 ? std::abs (j2) / norm : 0.0;
-
-    // How much of the two is shared (hearing-weighted mean coherence).
-    double cohMean = 0.0;
-    {
-        double wsum = 0.0;
-        for (int k = in.k0; k <= in.k1; ++k)
+        std::vector<cplx> energy, sharp;
+        double unused = 0.0;
+        sweepVectors (in, spec, coh, energy, sharp, unused);
+        double best = -1.0, tau = 0.0;
+        for (int lag : lags)
         {
-            const double w = hearingWeight (spec2.binHz (k)) * in.limit[(size_t) k] * std::sqrt (spec2.saa[(size_t) k] * spec2.sbb[(size_t) k]);
-            cohMean += w * coh2[(size_t) k];
-            wsum += w;
+            const double t = refine (sharp, in.k0, in.k1, N, lag, 1.5, 0.05);
+            const double score = std::abs (sweep (energy, in.k0, in.k1, t, N)) / overlapAt (in, t);
+            if (score > best) { best = score; tau = t; }
         }
-        cohMean = wsum > 0.0 ? cohMean / wsum : 0.0;
-    }
-    res.coherence = (float) cohMean;
 
-    // Do ~1 s stretches find the same lag on their own?
-    double agreement = 0.7;
-    if (f1.segments.size() >= 2)
-    {
-        int agree = 0, total = 0;
-        for (const auto& seg : f1.segments)
+        // Below ~0.1 ms the "offset" is the rotation itself bending the peak.
+        if (psrDb >= 14.0 && std::abs (tau) >= std::max (1.0, 1e-4 * fs) && std::abs (tau) <= maxLag - 1.0)
         {
-            const auto rs = gcc (in, seg, coh1);
-            const auto pl = peakLags (in, rs, maxLag, 1);
-            if (pl.empty()) continue;
-            ++total;
-            if (std::abs (pl.front() - best.tau) <= 2.0) ++agree;
+            res.hasOffset = true;
+            res.offsetSamples = tau;
+            // The best rotation once the track were moved, and what that adds.
+            cplx zt {};
+            for (int k = in.k0; k <= in.k1; ++k)
+                zt += weight[(size_t) k] * spec.sab[(size_t) k] * std::polar (1.0, spec.omega (k) * tau);
+            const auto moved = Correction::fromTotal (-std::arg (zt) * 180.0 / kPi);
+            const double eMoved = spec.sumEnergy (moved, 20.0, 20000.0, -tau);
+            const double eNow = spec.sumEnergy (res.correction, 20.0, 20000.0);
+            if (eMoved > 0.0 && eNow > 0.0)
+                res.timeFixDb = (float) std::max (0.0, 10.0 * std::log10 (eMoved / eNow));
         }
-        if (total >= 2) agreement = (double) agree / total;
     }
 
-    // ---- Phase rotation ---------------------------------------------------------
-    Rotation rot;
-    if (st.fitRotation && norm > 0.0)
-    {
-        rot = fitRotation (in, energy, norm, residual, maxLag);
-        const double gain = 10.0 * std::log10 ((1.0 + rot.cosine) / (1.0 + cosine0));
-        if (rot.found && gain >= 0.3 && std::abs (offset + rot.tau) <= maxLag)
-        {
-            residual = rot.tau;
-            sign = rot.sign;
-            res.rotateGainDb = (float) gain;
-        }
-        else
-            rot.found = false;
-    }
-
-    // ---- Result -----------------------------------------------------------------
-    res.lagSamples = offset + residual;
-    res.correction.shiftMs = -res.lagSamples / fs * 1000.0;
-    res.correction.invert = sign < 0;
-    res.correction.rotate = rot.found;
-    if (rot.found)
-    {
-        res.correction.rotateHz = rot.hz;
-        res.correction.rotateQ = rot.q;
-    }
-
-    // Gains on the pre-shifted spectrum: "as it was" undoes the pre-shift.
-    Correction before, after = res.correction;
-    before.shiftMs = offset / fs * 1000.0;
-    after.shiftMs = -residual / fs * 1000.0;
-    const auto gainDb = [&] (double lo, double hi) {
-        const double e0 = spec2.sumEnergy (before, lo, hi), e1 = spec2.sumEnergy (after, lo, hi);
-        return e0 > 0.0 && e1 > 0.0 ? (float) (10.0 * std::log10 (e1 / e0)) : 0.f;
-    };
-    res.lowEndGainDb = gainDb (20.0, 300.0);
-    res.sumGainDb = gainDb (20.0, 20000.0);
-
-    // Confidence: a sharp peak, a lot in common, the corrected pair actually
-    // adding up (the cosine is ~1 when the shared part lines up), segments that
-    // agree, and enough material.
-    const double cPeak = std::clamp ((psrDb - 13.0) / 12.0, 0.0, 1.0);
+    // ---- Confidence -------------------------------------------------------------
+    const double cFit = std::clamp ((fit - 0.2) / 0.6, 0.0, 1.0);
     const double cCoh = std::clamp ((cohMean - 0.05) / 0.4, 0.0, 1.0);
-    const double cosine = rot.found ? rot.cosine : cosine0;
-    const double cAlign = std::clamp ((cosine - 0.2) / 0.5, 0.0, 1.0);
-    const double cAmount = std::clamp (0.4 + 0.3 * f1.seconds, 0.4, 1.0);
-    res.confidence = (float) ((0.35 * cPeak + 0.25 * cCoh + 0.2 * cAlign + 0.2 * agreement) * cAmount);
+    const double cAmount = std::clamp (0.4 + 0.3 * frames.seconds, 0.4, 1.0);
+    res.confidence = (float) ((0.45 * cFit + 0.3 * cCoh + 0.25 * agreement) * cAmount);
 
-    if (beyondRange || std::abs (res.lagSamples) > maxLag - 1.0)
-        res.status = AlignStatus::outOfRange;
-    else if (psrDb < 14.0 || cohMean < 0.03 || cosine < 0.25)
-        res.status = AlignStatus::unrelated;
-    else
-        res.status = AlignStatus::ok;
+    // Unrelated: little in common, and no sign of a shared arrival either.
+    res.status = (cohMean < 0.05 || (fit < 0.15 && psrDb < 14.0)) ? AlignStatus::unrelated : AlignStatus::ok;
     return res;
 }
 

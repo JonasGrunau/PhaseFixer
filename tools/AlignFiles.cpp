@@ -1,4 +1,4 @@
-// Runs the analyzer on two WAV files and prints what the plugin would do.
+// Runs the analyzer on two WAV files and prints the rotation the plugin would apply.
 //   phasefucker_align <reference.wav> <track.wav> [max-lag-ms]
 // Both files are mixed to mono and must share a sample rate. Reads 16/24/32-bit
 // PCM and 32-bit float. No JUCE, so it builds with the core.
@@ -70,7 +70,6 @@ namespace
             case pf::AlignStatus::noReference: return "reference is silent";
             case pf::AlignStatus::noTrack: return "track is silent";
             case pf::AlignStatus::unrelated: return "the two don't share a sound";
-            case pf::AlignStatus::outOfRange: return "best match is outside the search range";
         }
         return "?";
     }
@@ -95,14 +94,13 @@ int main (int argc, char** argv)
     const auto r = pf::analyze (ref.data(), trk.data(), (int) std::min (ref.size(), trk.size()), s);
 
     std::printf ("status      %s\n", statusText (r.status));
-    std::printf ("shift       %+.4f ms (%+.3f samples)\n", r.correction.shiftMs, -r.lagSamples);
+    std::printf ("rotate      %+.1f deg\n", r.correction.phaseDeg);
     std::printf ("polarity    %s\n", r.correction.invert ? "flipped" : "as is");
-    if (r.correction.rotate)
-        std::printf ("rotate      %.1f Hz, Q %.2f (+%.2f dB)\n", r.correction.rotateHz, r.correction.rotateQ, r.rotateGainDb);
-    else
-        std::printf ("rotate      off\n");
     std::printf ("low end     %+.2f dB summed\n", r.lowEndGainDb);
     std::printf ("full band   %+.2f dB summed\n", r.sumGainDb);
+    if (r.hasOffset)
+        std::printf ("offset      track %s by %.3f ms (moving it would add %+.1f dB)\n", r.offsetSamples > 0 ? "late" : "early",
+                     std::abs (r.offsetSamples) / s.sampleRate * 1000.0, r.timeFixDb);
     std::printf ("coherence   %.0f %%\n", 100.0 * r.coherence);
     std::printf ("confidence  %.0f %%\n", 100.0 * r.confidence);
     std::printf ("analysed    %.1f s\n", r.activeSeconds);

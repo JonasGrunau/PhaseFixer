@@ -10,7 +10,7 @@ void LiveSpectrum::prepare (double fs)
 {
     // Same frame length rule as the analyzer (4x the shift range).
     size = 4096;
-    while (size < 4.0 * limits::kMaxShiftMs * 0.001 * fs) size <<= 1;
+    while (size < 4.0 * limits::kMaxLagMs * 0.001 * fs) size <<= 1;
     hop = size / 4;
     int order = 0;
     while ((1 << order) < size) ++order;
@@ -28,6 +28,7 @@ void LiveSpectrum::clear()
 {
     spec.reset (size, spec.sampleRate());
     nextEnd = -1;
+    ++frames;
 }
 
 void LiveSpectrum::update (const Capture& cap)
@@ -43,7 +44,8 @@ void LiveSpectrum::update (const Capture& cap)
 
     // ~3 s memory at the hop rate.
     const double decay = std::exp (-(double) hop / (3.0 * cap.sampleRate()));
-    for (; nextEnd <= end; nextEnd += hop)
+    // At most a few frames per call, so catching up never stalls the UI.
+    for (int budget = 6; nextEnd <= end && budget > 0; nextEnd += hop, --budget)
     {
         if (! cap.copy (nextEnd - size, size, a.data(), b.data())) continue;
         double ea = 0.0, eb = 0.0;
@@ -59,6 +61,7 @@ void LiveSpectrum::update (const Capture& cap)
         fft->forwardRealPair (a.data(), b.data(), size, window.data(), fa.data(), fb.data(), scratch);
         spec.scale (decay);
         spec.add (fa.data(), fb.data(), 1.0 / std::sqrt (std::sqrt (ea * eb)));
+        ++frames;
     }
 }
 

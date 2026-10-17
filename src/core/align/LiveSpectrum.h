@@ -21,6 +21,7 @@ public:
 
     const CrossSpectrum& spectrum() const noexcept { return spec; }
     bool hasData() const noexcept { return ! spec.empty(); }
+    int revision() const noexcept { return frames; }   // changes whenever a frame went in
 
 private:
     CrossSpectrum spec;
@@ -29,6 +30,7 @@ private:
     std::vector<dsp::cplx> fa, fb, scratch;
     int size = 0, hop = 0;
     int64_t nextEnd = -1;
+    int frames = 0;
 };
 
 } // namespace pf

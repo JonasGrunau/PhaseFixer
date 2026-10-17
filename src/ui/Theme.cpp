@@ -68,9 +68,31 @@ void cropMarks (juce::Graphics& g, juce::Rectangle<float> r, float len)
 
 void hatch (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c, float spacing, float thickness)
 {
-    g.setColour (c);
+    juce::Path p;   // one stroke for all the lines
     for (float x = r.getX() - r.getHeight(); x < r.getRight(); x += spacing)
-        g.drawLine (x, r.getBottom(), x + r.getHeight(), r.getY(), thickness);
+    {
+        p.startNewSubPath (x, r.getBottom());
+        p.lineTo (x + r.getHeight(), r.getY());
+    }
+    g.setColour (c);
+    g.strokePath (p, juce::PathStrokeType (thickness));
+}
+
+void paintOffscreen (juce::Graphics& g, juce::Rectangle<int> bounds, juce::Image& buffer,
+                     const std::function<void (juce::Graphics&)>& draw)
+{
+    const float scale = std::max (1.f, g.getInternalContext().getPhysicalPixelScaleFactor());
+    const int w = juce::roundToInt ((float) bounds.getWidth() * scale), h = juce::roundToInt ((float) bounds.getHeight() * scale);
+    if (w <= 0 || h <= 0) return;
+    if (buffer.getWidth() != w || buffer.getHeight() != h)
+        buffer = juce::Image (juce::Image::RGB, w, h, false, juce::SoftwareImageType());
+    {
+        juce::Graphics off (buffer);
+        off.addTransform (juce::AffineTransform::scale ((float) w / (float) bounds.getWidth(), (float) h / (float) bounds.getHeight()));
+        draw (off);
+    }
+    g.drawImageTransformed (buffer, juce::AffineTransform::scale ((float) bounds.getWidth() / (float) w, (float) bounds.getHeight() / (float) h)
+                                        .translated ((float) bounds.getX(), (float) bounds.getY()));
 }
 
 float textWidth (const juce::Font& f, const juce::String& s)

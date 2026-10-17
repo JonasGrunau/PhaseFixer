@@ -10,8 +10,12 @@
 //   header   wordmark, input meters, ALIGN
 //   A        scope
 //   B        phase / frequency
-//   C        correction: shift, polarity, rotate, A/B, lookahead
+//   C        correction: phase, polarity, A/B, time anchor
 //   footer   one line of what's going on
+//
+// Nothing repaints on a timer unless what it shows changed: the controls are
+// opaque and repaint themselves, the sheet only redraws the readout, the
+// time-anchor block and the footer when their text changes.
 class PhaseFuckerEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
@@ -24,11 +28,12 @@ public:
     void paint (juce::Graphics&) override {}
 
     void tick();   // one UI update (timer; the snapshot tool calls it directly)
+    Scope& getScope() noexcept { return scope; }
 
 private:
     struct Sheet : juce::Component
     {
-        explicit Sheet (PhaseFuckerEditor& e) : editor (e) {}
+        explicit Sheet (PhaseFuckerEditor& e) : editor (e) { setOpaque (true); }
         void paint (juce::Graphics&) override;
         PhaseFuckerEditor& editor;
     };
@@ -36,6 +41,10 @@ private:
     void timerCallback() override { tick(); }
     void layout();
     void updateStatus();
+
+    static juce::Rectangle<int> readoutArea() { return { 108, 500, 206, 84 }; }
+    static juce::Rectangle<int> anchorArea() { return { 512, 498, 344, 90 }; }
+    static juce::Rectangle<int> footerArea() { return { 24, 596, 832, 20 }; }
 
     PhaseFuckerProcessor& proc;
     PaperLookAndFeel lnf;
@@ -46,12 +55,11 @@ private:
     Scope scope { proc };
     PhaseStrip strip { proc };
 
-    Dial shiftDial, freqDial, qDial;
-    Key polarityKey, rotateKey, compareKey;
-    LookaheadField lookahead;
+    Dial phaseDial;
+    Key polarityKey, compareKey;
     TextLink resetLink { "Reset" };
 
-    juce::String status, statusRight;
+    juce::String status, statusRight, anchorKey;
     bool statusWarn = false;
     juce::uint32 seenResult = 0;
     int ticks = 0, refQuietTicks = 0;

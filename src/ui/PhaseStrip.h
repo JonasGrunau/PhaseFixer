@@ -21,6 +21,7 @@ public:
     void mouseExit (const juce::MouseEvent&) override { hoverX = -1.f; repaint(); }
 
 private:
+    void draw (juce::Graphics&);
     juce::Rectangle<float> plotArea() const;
     float xOf (float hz) const;
 
@@ -29,4 +30,8 @@ private:
     std::vector<pf::CrossSpectrum::Band> before, after;
     float lowGainDb = 0.f;
     float hoverX = -1.f;
+    juce::Image buffer;
+    int seenRevision = -1;
+    pf::Correction shown;
+    bool shownBypass = false;
 };

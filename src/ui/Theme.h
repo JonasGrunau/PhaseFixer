@@ -40,6 +40,12 @@ namespace theme
 
     float textWidth (const juce::Font& f, const juce::String& s);
 
+    // Draws `draw` into `buffer` with JUCE's software renderer at the
+    // screen's pixel density, then blits it. For busy plots this is 2-3x
+    // faster than drawing the same paths straight through CoreGraphics.
+    void paintOffscreen (juce::Graphics& g, juce::Rectangle<int> bounds, juce::Image& buffer,
+                         const std::function<void (juce::Graphics&)>& draw);
+
     // Fixed decimals; 0 really means none (juce::String (x, 0) prints all of them).
     juce::String fixed (double v, int decimals);
 

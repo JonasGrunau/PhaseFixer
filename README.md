@@ -2,18 +2,21 @@
 
 Automatic phase alignment for two tracks that recorded the same sound: kick
 in/out, snare top/bottom, close mics against overheads, DI against amp. Put it
-on the track you want to move, feed the reference into its sidechain, press
-**ALIGN**. It shifts the track in time (to a fraction of a sample), flips the
-polarity if that sums better, and adds an allpass when part of the spectrum is
-turned against the rest. Everything it decides lands on normal knobs, so you
-can check it on the scope and change it.
+on the track you want to fix, feed the reference into its sidechain, press
+**ALIGN**.
 
-VST3 and Audio Unit for macOS (universal), VST3 for Windows. JUCE 8.
+It works like Voxengo's PHA-979: every frequency of the track is turned by the
+same angle with a linear-phase filter, plus an optional polarity flip. Nothing
+is moved in time, so the track keeps its transients where they were; only how
+it sums with the reference changes. The cost is a fixed latency of about
+48 ms, which the host compensates.
+
+VST3 and Audio Unit for macOS (universal), VST3 for Windows, plus a standalone
+app for trying it without a DAW. JUCE 8.
 
 ## Using it
 
-1. Insert PhaseFucker on the track that should move (usually the later or the
-   less important mic).
+1. Insert PhaseFucker on the track to fix.
 2. Route the reference track into the plugin's sidechain:
    - **Logic**: *Side Chain* menu at the top of the plugin window.
    - **Ableton Live**: open the device's *Sidechain* section and pick the track.
@@ -28,55 +31,47 @@ VST3 and Audio Unit for macOS (universal), VST3 for Windows. JUCE 8.
 ### What you see
 
 - **A — Scope**: reference (ink) and track (vermilion) around the last hit they
-  share, the uncorrected track dotted, and the area between reference and track
-  hatched: that is what cancels. Drag sideways to nudge the shift (Shift for
-  fine), wheel to zoom, *HOLD* to freeze the hit.
+  share, the uncorrected track dotted, and the area between them hatched: that
+  is what cancels. Drag sideways to turn the phase (Shift for fine), wheel to
+  zoom, *HOLD* to freeze the hit.
 - **B — Phase / frequency**: the track's phase against the reference per
   1/6 octave, as it arrives (grey) and corrected (vermilion). Dots grow with
   level and fade where a band doesn't add up coherently. Beyond ±90° the two
   cancel. Top right: how much louder the low end sums now than uncorrected.
-- **C — Correction**: shift (±50 ms), polarity, allpass (frequency, Q), A/B,
-  lookahead.
+- **C — Correction**: PHASE (−180…+180°), polarity, A/B, and the time anchor.
+- **Time anchor**: how far apart the two tracks arrive. A rotation can't move
+  a track in time; when they are far apart, one angle only fits part of the
+  spectrum, and this tells you how much more you would get by moving the
+  track in the arrangement.
 - **Footer**: what happened and what to do next, with the confidence of the
   last analysis.
-
-### Lookahead and latency
-
-Moving a track *earlier* needs lookahead. The plugin reports it as latency and
-the host compensates. *Auto* (default) picks the smallest of 0 / 5 / 10 / 20 /
-50 ms that covers the current shift, 300 ms after the shift stops moving. Fix it
-to a value if your host dislikes latency changes. A 32-sample interpolator
-latency is always there.
 
 ## How the detection works
 
 `src/core/align/Analyzer.cpp`, on the last 10 s of both signals (mono):
 
-1. **Frames** (Hann, 4× the search range long, 75 % overlap) only where both
-   play. Frames with a shared hit weigh up to 3× more than sustained bleed;
-   levels are evened out so one loud bar doesn't decide alone.
-2. **Maximum-likelihood GCC** (Knapp & Carter): cross-spectrum weighted by
-   γ² / (1 − γ²) / |S_ab| with bias-corrected coherence γ², 25 Hz–16 kHz. Gives
-   sharp peaks even when the two mics sound very different.
-3. **Candidates**: the five strongest peaks within ±50 ms, each refined to a
-   fraction of a sample, then scored by how loud reference + shifted track
-   actually sum, weighted towards 60 Hz–2 kHz where cancellation is heard.
-   This picks the arrival that sums best instead of a reflection, and sets
-   the polarity.
-4. **Second pass** with the track frames pre-shifted by the winner (long delays
-   don't lose coherence to the window) for the final position (~0.01 sample),
-   coherence and confidence (peak sharpness, coherence, how well the corrected
-   pair adds up, and whether ~1 s segments agree on their own).
-5. **Allpass fit**: the correlation through a grid of 2nd-order allpasses
-   (40 frequencies × 5 Qs, one inverse FFT each), the best polished by
-   coordinate search with the shift re-fitted. Kept only if it raises the
-   summed level by at least 0.3 dB.
-6. Plain-language failures: not enough shared signal, silent sidechain,
-   unrelated signals, or a delay beyond the range.
+1. **Frames** (Hann, 75 % overlap) only where both play. Frames with a shared
+   hit weigh up to 3× more than sustained bleed; levels are evened out so one
+   loud bar doesn't decide alone.
+2. **Cross-spectrum and coherence** per bin, corrected for the bias a finite
+   number of frames gives the coherence.
+3. **Rotation**: the summed energy with the track turned by φ is
+   Σ(S_aa + S_bb) + 2·Re(e^{jφ}·Σ W·S_ab), largest at φ = −arg Σ W·S_ab. The
+   weights favour the coherent part below about 1 kHz (PHA-979's manual asks
+   for correlation near 1 there and lets the highs drift) and count each
+   octave equally, not each FFT bin. Polarity takes whatever is beyond ±90°.
+4. **Confidence** from how well one angle fits (weighted phase spread), the
+   coherence, whether ~1 s segments land on the same angle, and how much
+   material there was.
+5. **Time anchor**: maximum-likelihood GCC (Knapp & Carter) finds how far
+   apart the two arrive (to a fraction of a sample), and what moving the track
+   would add on top of the rotation.
 
-The audio path (`Aligner`) is a 64-tap Kaiser-windowed sinc delay (exact at
-whole samples), polarity and an RBJ allpass. Changes crossfade over 20 ms, so
-nothing clicks.
+The audio path (`Rotator`) computes `cos φ · x − sin φ · H{x}` with `H` a
+linear-phase FIR Hilbert transformer (Kaiser-windowed, ~86 ms long, flat
+within 0.1 dB from 20 Hz to Nyquist − 20 Hz). It runs as a partitioned FFT
+convolution in which a stereo pair shares one complex FFT. Angle and polarity
+glide over 20 ms, so nothing clicks.
 
 ## Building
 
@@ -87,7 +82,8 @@ cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-This installs the VST3 and AU into `~/Library/Audio/Plug-Ins`. JUCE 8 is
+This installs the VST3 and AU into `~/Library/Audio/Plug-Ins` and builds the
+standalone app. JUCE 8 is
 downloaded automatically; pass `-DFETCHCONTENT_SOURCE_DIR_JUCE=/path/to/JUCE`
 to use a local checkout.
 
@@ -98,15 +94,18 @@ Analysis and DSP don't depend on JUCE and build in seconds:
 ```sh
 cmake -B build-core -G Ninja -DCMAKE_BUILD_TYPE=Release -DPHASEFUCKER_BUILD_PLUGIN=OFF
 cmake --build build-core
-./build-core/phasefucker_tests                      # detection, delay line, allpass, capture
-./build-core/phasefucker_align ref.wav track.wav    # what the plugin would do with two files
+./build-core/phasefucker_tests                      # rotation, Hilbert filter, detection, capture
+./build-core/phasefucker_align ref.wav track.wav    # the rotation the plugin would apply to two files
 ```
 
 ### UI snapshots
 
 `build/phasefucker_snapshot_artefacts/Release/phasefucker_snapshot <dir>`
-renders the editor to PNGs (empty, idle, listening, aligned, rotate, compare,
-no sidechain) with synthetic drums, no DAW needed.
+renders the editor to PNGs (empty, idle, listening, aligned, offset, compare,
+no sidechain) with synthetic drums, no DAW needed. `... <dir> bench` times
+scope and editor paints instead.
+
+`./start.sh` builds and opens the standalone app (inputs 1-2 track, 3-4 reference).
 
 ### Releases
 
@@ -138,8 +137,8 @@ installer is not signed, so SmartScreen asks once (More info > Run anyway).
 ## Project layout
 
 ```
-src/core/dsp       FFT, sinc delay line, allpass
-src/core/align     capture, cross-spectrum, analyzer, real-time aligner, live spectrum
+src/core/dsp       FFT, Hilbert FIR design
+src/core/align     capture, cross-spectrum, analyzer, real-time rotator, live spectrum
 src/plugin         JUCE processor and editor
 src/ui             theme, controls, scope, phase strip
 tests/             Catch2 tests for the core

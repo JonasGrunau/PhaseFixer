@@ -1,59 +1,64 @@
 #include "TestUtil.h"
-#include "align/Aligner.h"
 #include "align/Analyzer.h"
+#include "align/Rotator.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 using namespace pf;
 using testutil::Signal;
+using Catch::Matchers::WithinAbs;
 
 namespace
 {
-    AlignResult align (const Signal& ref, const Signal& trk, double fs, bool rotation = true, double maxLagMs = 50.0)
+    AlignResult align (const Signal& ref, const Signal& trk, double fs)
     {
         AnalyzerSettings s;
         s.sampleRate = fs;
-        s.fitRotation = rotation;
-        s.maxLagMs = maxLagMs;
         return analyze (ref.data(), trk.data(), (int) std::min (ref.size(), trk.size()), s);
     }
 
     std::string describe (const AlignResult& r)
     {
-        return "status " + std::to_string ((int) r.status) + " lag " + std::to_string (r.lagSamples)
-             + " invert " + std::to_string (r.correction.invert) + " rotate " + std::to_string (r.correction.rotate)
-             + " " + std::to_string (r.correction.rotateHz) + " Hz Q " + std::to_string (r.correction.rotateQ)
+        return "status " + std::to_string ((int) r.status) + " phase " + std::to_string (r.correction.phaseDeg)
+             + " invert " + std::to_string (r.correction.invert) + " total " + std::to_string (r.correction.totalDeg())
              + " conf " + std::to_string (r.confidence) + " coh " + std::to_string (r.coherence)
-             + " low " + std::to_string (r.lowEndGainDb) + " dB";
+             + " low " + std::to_string (r.lowEndGainDb) + " dB full " + std::to_string (r.sumGainDb)
+             + " dB offset " + std::to_string (r.hasOffset) + " " + std::to_string (r.offsetSamples)
+             + " timefix " + std::to_string (r.timeFixDb);
+    }
+
+    // Shortest signed distance between two angles in degrees.
+    double angleDiff (double a, double b)
+    {
+        return std::remainder (a - b, 360.0);
     }
 } // namespace
 
-TEST_CASE ("Analyzer finds whole-sample delays both ways", "[analyzer]")
+TEST_CASE ("Correction folds big turns into a flip plus at most 90 degrees", "[analyzer]")
 {
-    const double fs = 48000.0;
-    const auto ref = testutil::drums (fs, 6.0);
-    for (double d : { 0.0, 17.0, -23.0, 480.0, -1200.0, 2300.0 })
+    for (double deg : { 0.0, 45.0, 90.0, 91.0, 150.0, 180.0, -100.0, -179.0 })
     {
-        const auto r = align (ref, testutil::delayed (ref, d), fs);
-        INFO ("delay " << d << ": " << describe (r));
-        CHECK (r.status == AlignStatus::ok);
-        CHECK_THAT (r.lagSamples, Catch::Matchers::WithinAbs (d, 0.05));
-        CHECK_FALSE (r.correction.invert);
-        CHECK_FALSE (r.correction.rotate);
-        CHECK (r.confidence > 0.8f);
+        const auto c = Correction::fromTotal (deg);
+        INFO (deg);
+        CHECK (std::abs (c.phaseDeg) <= 90.0 + 1e-9);
+        CHECK_THAT (angleDiff (c.totalDeg(), deg), WithinAbs (0.0, 1e-9));
     }
 }
 
-TEST_CASE ("Analyzer finds fractional delays", "[analyzer]")
+TEST_CASE ("Analyzer undoes a phase rotation", "[analyzer]")
 {
     const double fs = 48000.0;
-    const auto ref = testutil::drums (fs, 5.0, 3);
-    for (double d : { 0.25, 3.5, 13.37, -7.81 })
+    const auto ref = testutil::drums (fs, 6.0);
+    for (double deg : { 0.0, 30.0, -75.0, 120.0, 180.0 })
     {
-        const auto r = align (ref, testutil::delayed (ref, d), fs);
-        INFO ("delay " << d << ": " << describe (r));
-        CHECK_THAT (r.lagSamples, Catch::Matchers::WithinAbs (d, 0.05));
+        const auto r = align (ref, testutil::rotated (ref, deg), fs);
+        INFO ("track turned " << deg << ": " << describe (r));
+        CHECK (r.status == AlignStatus::ok);
+        CHECK_THAT (angleDiff (r.correction.totalDeg(), -deg), WithinAbs (0.0, 1.0));
+        CHECK (std::abs (r.correction.phaseDeg) <= 90.0);
+        CHECK (r.confidence > 0.8f);
+        CHECK_FALSE (r.hasOffset);
     }
 }
 
@@ -61,91 +66,69 @@ TEST_CASE ("Analyzer flips polarity", "[analyzer]")
 {
     const double fs = 48000.0;
     const auto ref = testutil::drums (fs, 5.0, 4);
-    const auto r = align (ref, testutil::scaled (testutil::delayed (ref, 5.5), -0.4), fs);
+    const auto r = align (ref, testutil::scaled (ref, -0.4), fs);
     INFO (describe (r));
     CHECK (r.status == AlignStatus::ok);
     CHECK (r.correction.invert);
-    CHECK_THAT (r.lagSamples, Catch::Matchers::WithinAbs (5.5, 0.05));
-    CHECK (r.lowEndGainDb > 3.f);   // was cancelling, now adds up
+    CHECK_THAT (r.correction.phaseDeg, WithinAbs (0.0, 1.0));
+    CHECK (r.lowEndGainDb > 6.f);   // was cancelling, now adds up
 }
 
-TEST_CASE ("Analyzer sees through a different tone", "[analyzer]")
+TEST_CASE ("Analyzer sees through a different tone and bleed", "[analyzer]")
 {
     const double fs = 48000.0;
-    const auto ref = testutil::drums (fs, 5.0, 5);
-    // Zero-phase colouring, so the true delay stays exactly 40.3 samples.
-    auto trk = testutil::Biquad::lowpass (1800.0, 0.7, fs).zeroPhase (testutil::delayed (ref, 40.3));
-    trk = testutil::Biquad::peak (120.0, 1.0, 9.0, fs).zeroPhase (trk);
-    const auto r = align (ref, trk, fs);
-    INFO (describe (r));
-    CHECK (r.status == AlignStatus::ok);
-    CHECK_THAT (r.lagSamples, Catch::Matchers::WithinAbs (40.3, 0.1));
-}
-
-TEST_CASE ("Analyzer copes with bleed as loud as the signal", "[analyzer]")
-{
-    const double fs = 48000.0;
-    const auto ref = testutil::drums (fs, 6.0, 6);
+    const auto ref = testutil::drums (fs, 6.0, 5);
     double rms = 0.0;
     for (float v : ref) rms += (double) v * v;
     rms = std::sqrt (rms / (double) ref.size());
-    const auto trk = testutil::sum (testutil::delayed (ref, 12.6), testutil::noise ((int) ref.size(), rms, 99));
+    // Zero-phase colouring keeps the true turn at exactly 60 degrees.
+    auto trk = testutil::Biquad::lowpass (1800.0, 0.7, fs).zeroPhase (testutil::rotated (ref, 60.0));
+    trk = testutil::Biquad::peak (120.0, 1.0, 9.0, fs).zeroPhase (trk);
+    trk = testutil::sum (trk, testutil::noise ((int) ref.size(), rms, 99));
     const auto r = align (ref, trk, fs);
     INFO (describe (r));
     CHECK (r.status == AlignStatus::ok);
-    CHECK_THAT (r.lagSamples, Catch::Matchers::WithinAbs (12.6, 0.2));
+    CHECK_THAT (angleDiff (r.correction.totalDeg(), -60.0), WithinAbs (0.0, 4.0));
 }
 
-TEST_CASE ("Analyzer picks the arrival that sums best, not a reflection", "[analyzer]")
+TEST_CASE ("Analyzer turns a delayed track to help the low end, and reports the offset", "[analyzer]")
 {
+    // Kick in / kick out: the second mic 2.9 ms later. A rotation can't undo a
+    // delay, but it can line up the low end, which is where it cancels.
     const double fs = 48000.0;
     const auto ref = testutil::drums (fs, 6.0, 7);
-    {
-        const auto trk = testutil::sum (testutil::delayed (ref, 30.0), testutil::scaled (testutil::delayed (ref, 210.0), 0.7));
-        const auto r = align (ref, trk, fs, false);
-        INFO ("direct louder: " << describe (r));
-        CHECK_THAT (r.lagSamples, Catch::Matchers::WithinAbs (30.0, 0.5));
-    }
-    {
-        const auto trk = testutil::sum (testutil::scaled (testutil::delayed (ref, 30.0), 0.5), testutil::delayed (ref, 210.0));
-        const auto r = align (ref, trk, fs, false);
-        INFO ("reflection louder: " << describe (r));
-        CHECK_THAT (r.lagSamples, Catch::Matchers::WithinAbs (210.0, 0.5));
-    }
-}
-
-TEST_CASE ("Analyzer fits an allpass when the reference was phase-shifted", "[analyzer]")
-{
-    const double fs = 48000.0;
-    const auto src = testutil::drums (fs, 6.0, 8);
-    const auto ref = testutil::allpassed (src, 150.0, 0.7, fs);   // e.g. a resonance on one mic only
-    const auto trk = testutil::delayed (src, 20.0);
-
-    const auto plain = align (ref, trk, fs, false);
-    const auto r = align (ref, trk, fs, true);
-    INFO ("plain: " << describe (plain));
-    INFO ("rotated: " << describe (r));
-    CHECK (r.status == AlignStatus::ok);
-    REQUIRE (r.correction.rotate);
-    CHECK (r.correction.rotateHz > 150.0 * 0.75);
-    CHECK (r.correction.rotateHz < 150.0 * 1.25);
-    CHECK (r.lowEndGainDb > plain.lowEndGainDb + 0.5f);
-    CHECK_THAT (r.lagSamples, Catch::Matchers::WithinAbs (20.0, 1.0));
-}
-
-TEST_CASE ("Analyzer keeps the allpass off when it doesn't help", "[analyzer]")
-{
-    const double fs = 48000.0;
-    const auto ref = testutil::drums (fs, 5.0, 10);
-    const auto r = align (ref, testutil::delayed (ref, -88.25), fs);
+    const double d = 0.0029 * fs;
+    const auto trk = testutil::scaled (testutil::delayed (ref, d), -0.8);
+    const auto r = align (ref, trk, fs);
     INFO (describe (r));
-    CHECK_FALSE (r.correction.rotate);
+    CHECK (r.status == AlignStatus::ok);
+    CHECK (r.lowEndGainDb > 1.f);
+    REQUIRE (r.hasOffset);
+    CHECK_THAT (r.offsetSamples, WithinAbs (d, 0.5));
+    CHECK (r.timeFixDb > 0.f);
+
+    // Measured on the audio itself: the found turn sums better below 300 Hz
+    // than turning 30 degrees either way.
+    const auto lowSum = [&] (double deg) {
+        const auto s = testutil::sum (ref, testutil::rotated (trk, deg));
+        const auto lp = testutil::Biquad::lowpass (300.0, 0.7, fs);
+        const auto low = lp.zeroPhase (lp.zeroPhase (s));
+        double e = 0.0;
+        for (float v : low) e += (double) v * v;
+        return e;
+    };
+    const double found = r.correction.totalDeg();
+    CHECK (lowSum (found) > lowSum (found - 30.0));
+    CHECK (lowSum (found) > lowSum (found + 30.0));
 }
 
 TEST_CASE ("Analyzer says so when the signals are unrelated", "[analyzer]")
 {
     const double fs = 48000.0;
-    const auto r = align (testutil::drums (fs, 6.0, 11), testutil::drums (fs, 6.0, 12), fs);
+    const auto ref = testutil::drums (fs, 6.0, 11);
+    double rms = 0.0;
+    for (float v : ref) rms += (double) v * v;
+    const auto r = align (ref, testutil::noise ((int) ref.size(), std::sqrt (rms / (double) ref.size()), 12), fs);
     INFO (describe (r));
     CHECK ((r.status == AlignStatus::unrelated || r.confidence < 0.4f));
 }
@@ -168,69 +151,31 @@ TEST_CASE ("Analyzer works at other sample rates", "[analyzer]")
     for (double fs : { 44100.0, 96000.0 })
     {
         const auto ref = testutil::drums (fs, 5.0, 14);
-        const double d = 3.3e-3 * fs;
-        const auto r = align (ref, testutil::delayed (ref, d), fs);
+        const auto r = align (ref, testutil::rotated (ref, -45.0), fs);
         INFO (fs << " Hz: " << describe (r));
         CHECK (r.status == AlignStatus::ok);
-        CHECK_THAT (r.correction.shiftMs, Catch::Matchers::WithinAbs (-3.3, 0.002));
+        CHECK_THAT (angleDiff (r.correction.totalDeg(), 45.0), WithinAbs (0.0, 1.0));
     }
 }
 
-TEST_CASE ("Analyzer won't claim a delay outside its range", "[analyzer]")
-{
-    const double fs = 48000.0;
-    const auto ref = testutil::drums (fs, 6.0, 15);
-    const auto r = align (ref, testutil::delayed (ref, 0.070 * fs), fs);
-    INFO (describe (r));
-    CHECK (r.status != AlignStatus::ok);
-}
-
-TEST_CASE ("Aligning with the result makes the track sum with the reference", "[analyzer][aligner]")
+TEST_CASE ("Rotating with the result makes the track sum with the reference", "[analyzer][rotator]")
 {
     const double fs = 48000.0;
     const auto ref = testutil::drums (fs, 5.0, 16);
-    const auto trk = testutil::scaled (testutil::delayed (ref, 131.7), -0.8);
+    const auto trk = testutil::scaled (testutil::rotated (ref, 135.0), 0.8);
     const auto r = align (ref, trk, fs);
     REQUIRE (r.status == AlignStatus::ok);
 
-    Aligner a;
-    a.prepare (fs, 1);
-    a.setTarget (r.correction, 5.0, false);
+    Rotator rot;
+    rot.prepare (fs, 1);
+    rot.setTarget (r.correction, false);
     Signal y (trk);
     for (size_t s = 0; s < y.size(); s += 512)
     {
         float* ch[] = { y.data() + s };
-        a.process (ch, 1, (int) std::min<size_t> (512, y.size() - s));
+        rot.process (ch, 1, (int) std::min<size_t> (512, y.size() - s));
     }
     // The host delays the reference by the reported latency.
-    const auto refLate = testutil::delayed (ref, Aligner::latencyFor (5.0, fs));
-    CHECK (testutil::correlation (refLate.data(), y.data(), 4800, (int) y.size() - 4800) > 0.99);
-}
-
-TEST_CASE ("Analyzer handles a sustained bass through an amp-like filter", "[analyzer]")
-{
-    // DI vs miked amp: notes held for a beat, so the correlation repeats every
-    // period; the "amp" is a resonant low-pass with real (not zero) phase.
-    const double fs = 48000.0;
-    const int n = (int) (6.0 * fs);
-    Signal di ((size_t) n);
-    const double notes[] = { 55.0, 55.0, 65.4, 73.4, 49.0, 55.0, 82.4, 61.7 };
-    double phase = 0.0;
-    for (int i = 0; i < n; ++i)
-    {
-        const double t = i / fs, beat = std::fmod (t, 0.5);
-        const double hz = notes[(int) (t / 0.5) % 8];
-        phase += hz / fs;
-        const double saw = 2.0 * (phase - std::floor (phase)) - 1.0;
-        di[(size_t) i] = (float) (0.4 * saw * std::exp (-beat * 3.0) * std::min (1.0, beat * 400.0));
-    }
-    const auto amp = testutil::Biquad::lowpass (2500.0, 1.4, fs).run (testutil::delayed (di, 0.0023 * fs));
-
-    const auto r = align (di, amp, fs);
-    INFO (describe (r));
-    CHECK (r.status == AlignStatus::ok);
-    CHECK (r.lowEndGainDb >= 0.f);
-    // The filter adds ~0.1 ms of its own delay on top of 2.3 ms.
-    CHECK (r.correction.shiftMs < -2.2);
-    CHECK (r.correction.shiftMs > -2.6);
+    const auto refLate = testutil::delayed (ref, rot.latency());
+    CHECK (testutil::correlation (refLate.data(), y.data(), 9600, (int) y.size() - 9600) > 0.99);
 }

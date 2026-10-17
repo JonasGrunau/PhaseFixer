@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 # Release builds pass the tag's version, e.g. -DPHASEFUCKER_VERSION=1.2.0.
-set(PHASEFUCKER_VERSION "0.1.0" CACHE STRING "Plugin version, MAJOR.MINOR.PATCH")
+set(PHASEFUCKER_VERSION "0.2.0" CACHE STRING "Plugin version, MAJOR.MINOR.PATCH")
 project(PhaseFucker VERSION ${PHASEFUCKER_VERSION} LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -18,17 +18,17 @@ option(PHASEFUCKER_COPY_PLUGIN "Copy the built plugins into the system plug-in f
 include(FetchContent)
 
 # ---------------------------------------------------------------------------
-# Core: DSP, analysis and the real-time chain. Plain C++20, no JUCE, so tests
-# and the command-line tool build in seconds.
+# Core: DSP, analysis and the real-time phase rotator. Plain C++20, no JUCE,
+# so tests and the command-line tool build in seconds.
 # ---------------------------------------------------------------------------
 add_library(phasefucker_core STATIC
     src/core/dsp/Fft.cpp
-    src/core/dsp/FractionalDelay.cpp
-    src/core/align/Aligner.cpp
+    src/core/dsp/Hilbert.cpp
     src/core/align/Analyzer.cpp
     src/core/align/Capture.cpp
     src/core/align/CrossSpectrum.cpp
     src/core/align/LiveSpectrum.cpp
+    src/core/align/Rotator.cpp
 )
 target_include_directories(phasefucker_core PUBLIC src/core)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
@@ -125,7 +125,7 @@ if(PHASEFUCKER_BUILD_TESTS)
 
     add_executable(phasefucker_tests
         tests/TestDsp.cpp
-        tests/TestAligner.cpp
+        tests/TestRotator.cpp
         tests/TestAnalyzer.cpp)
     target_include_directories(phasefucker_tests PRIVATE tests)
     target_link_libraries(phasefucker_tests PRIVATE phasefucker_core Catch2::Catch2WithMain)

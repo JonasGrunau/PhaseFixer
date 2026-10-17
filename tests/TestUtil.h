@@ -1,6 +1,5 @@
 #pragma once
 
-#include "dsp/Allpass.h"
 #include "dsp/Fft.h"
 
 #include <algorithm>
@@ -152,12 +151,27 @@ struct Biquad
     }
 };
 
-inline Signal allpassed (const Signal& x, double hz, double q, double fs)
+// Every frequency turned by `deg` (exact, frequency domain): what an ideal
+// PHA-979 rotation does. DC and Nyquist only get the cosine part.
+inline Signal rotated (const Signal& x, double deg)
 {
-    pf::dsp::Allpass ap;
-    ap.setCoeffs (pf::dsp::AllpassCoeffs::make (hz, q, fs));
-    Signal y (x.size());
-    for (size_t i = 0; i < x.size(); ++i) y[i] = ap.process (x[i]);
+    const int n = (int) x.size();
+    int order = 0;
+    while ((1 << order) < n + 8192) ++order;
+    pf::dsp::Fft fft (order);
+    const int N = fft.size();
+    std::vector<pf::dsp::cplx> z ((size_t) N);
+    for (int i = 0; i < n; ++i) z[(size_t) i] = x[(size_t) i];
+    fft.forward (z.data());
+    const double a = deg * std::numbers::pi / 180.0;
+    for (int k = 0; k < N; ++k)
+    {
+        if (k == 0 || k == N / 2) z[(size_t) k] *= std::cos (a);
+        else z[(size_t) k] *= std::polar (1.0, k < N / 2 ? a : -a);
+    }
+    fft.inverse (z.data());
+    Signal y ((size_t) n);
+    for (int i = 0; i < n; ++i) y[(size_t) i] = (float) z[(size_t) i].real();
     return y;
 }
 
