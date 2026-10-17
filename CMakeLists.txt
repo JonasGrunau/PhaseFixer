@@ -58,8 +58,10 @@ if(PHASEFUCKER_BUILD_PLUGIN)
         BUNDLE_ID "de.grunau.phasefucker"
         PLUGIN_MANUFACTURER_CODE Jgru
         PLUGIN_CODE PhFk
-        FORMATS VST3 AU
+        FORMATS VST3 AU Standalone
         PRODUCT_NAME "PhaseFucker"
+        MICROPHONE_PERMISSION_ENABLED TRUE
+        MICROPHONE_PERMISSION_TEXT "PhaseFucker listens to the track and reference inputs."
         IS_SYNTH FALSE
         NEEDS_MIDI_INPUT FALSE
         NEEDS_MIDI_OUTPUT FALSE
