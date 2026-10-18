@@ -14,6 +14,8 @@ it sums with the reference changes. The cost is a fixed latency of about
 VST3 and Audio Unit for macOS (universal), VST3 for Windows, plus a standalone
 app for trying it without a DAW. JUCE 8.
 
+![PhaseFucker after ALIGN: the track turned +65° and flipped, the low end summing 4.1 dB louder](docs/screenshot.png)
+
 ## Using it
 
 1. Insert PhaseFucker on the track to fix.
