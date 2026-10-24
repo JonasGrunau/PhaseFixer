@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "name": "PhaseFucker",
+  "category": "Linear-phase alignment",
+  "description": "Automatic phase alignment for two tracks that recorded the same sound: kick in/out, snare top/bottom, close mics against overheads, DI against amp. Put it on the track to fix, feed the reference into its sidechain and press ALIGN. Nothing moves in time; every frequency turns by the same angle.",
+  "image": "docs/screenshot.png",
+  "bundles": ["PhaseFucker.vst3", "PhaseFucker.component"],
+  "build": {
+    "cmake_args": ["-DPHASEFUCKER_BUILD_TESTS=OFF", "-DPHASEFUCKER_COPY_PLUGIN=OFF"],
+    "targets": ["PhaseFucker_VST3", "PhaseFucker_AU"],
+    "artefacts": "PhaseFucker_artefacts/Release"
+  }
+}
