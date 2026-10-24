@@ -53,7 +53,7 @@ void PhaseStrip::paint (juce::Graphics& g)
 
 void PhaseStrip::draw (juce::Graphics& g)
 {
-    g.fillAll (col::paper);
+    g.fillAll (col::sheet);
     const auto plot = plotArea();
     const auto yOf = [&] (float deg) { return plot.getCentreY() - deg / 180.f * plot.getHeight() * 0.5f; };
 
@@ -68,6 +68,8 @@ void PhaseStrip::draw (juce::Graphics& g)
         const float w = textWidth (g.getCurrentFont(), v);
         caption (g, "Low end vs. bypass", r.withTrimmedRight (w + 8.f), juce::Justification::centredRight, col::inkSoft, 9.5f);
     }
+
+    plotWell (g, plot);
 
     // Cancellation zones (beyond +-90 degrees).
     const auto zoneTop = plot.withBottom (yOf (90.f));
@@ -154,10 +156,6 @@ void PhaseStrip::draw (juce::Graphics& g)
         const float w = textWidth (g.getCurrentFont(), txt) + 12.f;
         auto box = juce::Rectangle<float> (x + 8.f, plot.getY() + 4.f, w, 17.f);
         if (box.getRight() > plot.getRight()) box.setX (x - 8.f - w);
-        g.setColour (col::paper);
-        g.fillRect (box);
-        g.setColour (col::ink);
-        g.drawRect (box, 1.f);
-        g.drawText (txt, box, juce::Justification::centred, false);
+        readoutBox (g, box, txt);
     }
 }

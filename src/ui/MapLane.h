@@ -5,7 +5,7 @@
 
 // Section B in per-hit mode: the phase map along the host's timeline. Every
 // hit of the reference is a point at its turn (-180..180 degrees); the
-// vermilion line is the turn the track gets over time, holds and glides
+// accent line is the turn the track gets over time, holds and glides
 // included. Bars are numbered as the host counts them, and a hairline follows
 // playback.
 //

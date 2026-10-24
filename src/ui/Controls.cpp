@@ -2,30 +2,32 @@
 
 using namespace theme;
 
-// ---- PaperLookAndFeel ----------------------------------------------------------
+// ---- SheetLookAndFeel ----------------------------------------------------------
 
-PaperLookAndFeel::PaperLookAndFeel()
+SheetLookAndFeel::SheetLookAndFeel()
 {
-    setColour (juce::PopupMenu::backgroundColourId, col::paper);
+    setColour (juce::ResizableWindow::backgroundColourId, col::sheet);
+    setColour (juce::PopupMenu::backgroundColourId, col::raised);
     setColour (juce::PopupMenu::textColourId, col::ink);
-    setColour (juce::PopupMenu::highlightedBackgroundColourId, col::ink);
-    setColour (juce::PopupMenu::highlightedTextColourId, col::paper);
-    setColour (juce::TextEditor::backgroundColourId, col::paper);
+    setColour (juce::PopupMenu::highlightedBackgroundColourId, col::hairline);
+    setColour (juce::PopupMenu::highlightedTextColourId, col::ink);
+    setColour (juce::TextEditor::backgroundColourId, col::well);
     setColour (juce::TextEditor::textColourId, col::ink);
-    setColour (juce::TextEditor::outlineColourId, col::ink);
+    setColour (juce::TextEditor::outlineColourId, col::inkSoft);
     setColour (juce::TextEditor::focusedOutlineColourId, col::ink);
-    setColour (juce::TextEditor::highlightColourId, col::accentWash);
+    setColour (juce::TextEditor::highlightColourId, col::accentDim);
+    setColour (juce::TextEditor::highlightedTextColourId, col::ink);
     setColour (juce::CaretComponent::caretColourId, col::accent);
 }
 
-void PaperLookAndFeel::drawPopupMenuBackground (juce::Graphics& g, int w, int h)
+void SheetLookAndFeel::drawPopupMenuBackground (juce::Graphics& g, int w, int h)
 {
-    g.fillAll (col::paper);
-    g.setColour (col::ink);
+    g.fillAll (col::raised);
+    g.setColour (col::rim);
     g.drawRect (0, 0, w, h, 1);
 }
 
-void PaperLookAndFeel::drawPopupMenuItem (juce::Graphics& g, const juce::Rectangle<int>& area, bool isSeparator, bool,
+void SheetLookAndFeel::drawPopupMenuItem (juce::Graphics& g, const juce::Rectangle<int>& area, bool isSeparator, bool,
                                           bool isHighlighted, bool isTicked, bool, const juce::String& text,
                                           const juce::String&, const juce::Drawable*, const juce::Colour*)
 {
@@ -38,20 +40,20 @@ void PaperLookAndFeel::drawPopupMenuItem (juce::Graphics& g, const juce::Rectang
     auto r = area.reduced (2, 0);
     if (isHighlighted)
     {
-        g.setColour (col::ink);
+        g.setColour (col::hairline);
         g.fillRect (r);
     }
-    g.setColour (isHighlighted ? col::paper : col::ink);
+    g.setColour (col::ink);
     g.setFont (getPopupMenuFont());
     g.drawText (text, r.withTrimmedLeft (22), juce::Justification::centredLeft, false);
     if (isTicked)
     {
-        g.setColour (isHighlighted ? col::paper : col::accent);
+        g.setColour (col::accent);
         g.fillRect (juce::Rectangle<float> (5.f, 5.f).withCentre ({ (float) r.getX() + 11.f, (float) r.getCentreY() }));
     }
 }
 
-void PaperLookAndFeel::drawCornerResizer (juce::Graphics& g, int w, int h, bool over, bool dragging)
+void SheetLookAndFeel::drawCornerResizer (juce::Graphics& g, int w, int h, bool over, bool dragging)
 {
     g.setColour (over || dragging ? col::ink : col::inkFaint);
     for (float i = 0.25f; i < 1.f; i += 0.25f)
@@ -86,7 +88,7 @@ void Dial::resized()
 
 void Dial::paint (juce::Graphics& g)
 {
-    g.fillAll (col::paper);
+    g.fillAll (col::sheet);
     const auto area = discArea();
     const auto c = area.getCentre();
     const float R = area.getWidth() * 0.5f;
@@ -110,20 +112,21 @@ void Dial::paint (juce::Graphics& g)
         p.startNewSubPath (at (a, R * (major ? 0.78f : 0.84f)));
         p.lineTo (at (a, R * 0.97f));
     }
-    g.setColour (col::hairline);
+    g.setColour (col::tick);
     g.strokePath (unlit, juce::PathStrokeType (1.f));
     g.setColour (ink);
     g.strokePath (lit, juce::PathStrokeType (1.1f));
 
     // Disc.
     const float rd = R * 0.68f;
-    g.setColour (col::paper);
+    g.setColour (col::raised);
     g.fillEllipse (juce::Rectangle<float> (2 * rd, 2 * rd).withCentre (c));
-    g.setColour (ink);
+    g.setColour (dimmed ? col::inkFaint : hot ? col::rimHot : col::rim);
     g.drawEllipse (juce::Rectangle<float> (2 * rd, 2 * rd).withCentre (c), hot ? 1.8f : 1.25f);
 
-    // Pointer with a vermilion tip.
+    // Pointer with an accent tip.
     const float a = angle (norm);
+    g.setColour (ink);
     g.drawLine ({ at (a, rd * 0.18f), at (a, rd * 0.72f) }, 2.f);
     g.setColour (dimmed ? col::inkFaint : col::accent);
     g.drawLine ({ at (a, rd * 0.72f), at (a, rd * 0.95f) }, 2.f);
@@ -227,7 +230,7 @@ Key::Key (juce::RangedAudioParameter& p, juce::String t, float h)
 
 void Key::paint (juce::Graphics& g)
 {
-    g.fillAll (col::paper);
+    g.fillAll (col::sheet);
     const auto r = getLocalBounds().toFloat().reduced (0.5f);
     const auto fill = accentWhenOn ? col::accent : col::ink;
     if (on)
@@ -237,10 +240,10 @@ void Key::paint (juce::Graphics& g)
     }
     else
     {
-        g.setColour (col::ink);
-        g.drawRoundedRectangle (r, kRadius, isMouseOver() ? 1.8f : 1.f);
+        g.setColour (isMouseOver() ? col::ink : col::inkSoft);
+        g.drawRoundedRectangle (r, kRadius, 1.f);
     }
-    g.setColour (on ? col::paper : col::ink);
+    g.setColour (on ? col::sheet : col::ink);
     g.setFont (text.length() <= 2 ? title (textHeight) : label (textHeight));
     g.drawText (text.length() <= 3 ? text : text.toUpperCase(), r, juce::Justification::centred, false);
 }
@@ -276,16 +279,16 @@ juce::Rectangle<float> TagSwitch::tagArea (int i) const
 
 void TagSwitch::paint (juce::Graphics& g)
 {
-    g.fillAll (col::paper);
+    g.fillAll (col::sheet);
     for (int i = 0; i < names.size(); ++i)
     {
         const auto r = tagArea (i).reduced (1.f);
         const bool on = i == index, hinted = i == hint && ! on;
-        g.setColour (on ? col::ink : col::paper);
+        g.setColour (on ? col::ink : col::sheet);
         g.fillRoundedRectangle (r, kRadius);
-        g.setColour (hinted ? col::accent : col::ink);
+        g.setColour (hinted ? col::accent : on ? col::ink : col::inkSoft);
         g.drawRoundedRectangle (r, kRadius, hinted ? 1.6f : 1.f);
-        caption (g, names[i], r, juce::Justification::centred, on ? col::paper : hinted ? col::accent : col::ink, 9.f);
+        caption (g, names[i], r, juce::Justification::centred, on ? col::sheet : hinted ? col::accent : col::ink, 9.f);
     }
 }
 
@@ -308,7 +311,7 @@ void AlignKey::setLook (Look l, float p)
 
 void AlignKey::paint (juce::Graphics& g)
 {
-    g.fillAll (col::paper);
+    g.fillAll (col::sheet);
     auto r = getLocalBounds().toFloat().reduced (0.5f);
     if (isMouseButtonDown()) r = r.translated (0.f, 1.f);
     const bool hover = isMouseOver();
@@ -318,15 +321,15 @@ void AlignKey::paint (juce::Graphics& g)
     switch (look)
     {
         case Look::idle:
-            g.setColour (hover ? juce::Colour (0xff2b2a28) : col::ink);
+            g.setColour (hover ? col::ink.interpolatedWith (col::sheet, 0.12f) : col::ink);   // a shade towards the sheet
             g.fillRoundedRectangle (r, kRadius);
             t = "ALIGN";
-            fg = col::paper;
+            fg = col::sheet;
             break;
         case Look::listening:
         case Look::analysing:
         {
-            g.setColour (col::paper);
+            g.setColour (col::sheet);
             g.fillRoundedRectangle (r, kRadius);
             const auto bar = r.reduced (3.f).removeFromBottom (4.f);
             if (look == Look::listening)
@@ -359,7 +362,7 @@ void AlignKey::paint (juce::Graphics& g)
             g.setColour (col::accent);
             g.fillRoundedRectangle (r, kRadius);
             t = "ALIGNED";
-            fg = col::paper;
+            fg = col::sheet;
             {
                 g.setFont (label (14.f));
                 const float w = textWidth (g.getCurrentFont(), t);
@@ -368,13 +371,13 @@ void AlignKey::paint (juce::Graphics& g)
                 tick.startNewSubPath (x, y);
                 tick.lineTo (x + 4.f, y + 4.f);
                 tick.lineTo (x + 11.f, y - 5.f);
-                g.setColour (col::paper);
+                g.setColour (col::sheet);
                 g.strokePath (tick, juce::PathStrokeType (2.f));
                 r = r.translated (-8.f, 0.f);
             }
             break;
         case Look::failed:
-            g.setColour (col::paper);
+            g.setColour (col::sheet);
             g.fillRoundedRectangle (r, kRadius);
             g.setColour (col::accent);
             g.drawRoundedRectangle (r, kRadius, 1.5f);
@@ -423,7 +426,7 @@ void LevelMeter::setMissing (bool m, juce::String why)
 
 void LevelMeter::paint (juce::Graphics& g)
 {
-    g.fillAll (col::paper);
+    g.fillAll (col::sheet);
     auto b = getLocalBounds().toFloat();
     auto top = b.removeFromTop (13.f);
     caption (g, name, top, juce::Justification::centredLeft, col::ink, 9.5f);
@@ -443,6 +446,8 @@ void LevelMeter::paint (juce::Graphics& g)
 
     const auto bar = b.removeFromTop (6.f).translated (0.f, 2.f);
     const auto x = [&] (float db) { return bar.getX() + bar.getWidth() * juce::jlimit (0.f, 1.f, (db + 60.f) / 60.f); };
+    g.setColour (col::well);
+    g.fillRect (bar);
     if (missing)
     {
         juce::Graphics::ScopedSaveState s (g);
@@ -451,7 +456,7 @@ void LevelMeter::paint (juce::Graphics& g)
     }
     else
     {
-        g.setColour (col::ink);
+        g.setColour (col::inkSoft);
         g.fillRect (bar.withRight (x (levelDb)));
         if (holdDb > -60.f)
         {
@@ -461,6 +466,7 @@ void LevelMeter::paint (juce::Graphics& g)
     }
     g.setColour (col::hairline);
     g.drawRect (bar, 0.8f);
+    g.setColour (col::inkFaint);
     for (float db : { -48.f, -36.f, -24.f, -12.f, 0.f })
         g.fillRect (juce::Rectangle<float> (x (db) - 0.5f, bar.getBottom() + 1.5f, 1.f, 3.f));
 }
@@ -469,7 +475,7 @@ void LevelMeter::paint (juce::Graphics& g)
 
 void TextLink::paint (juce::Graphics& g)
 {
-    g.fillAll (col::paper);
+    g.fillAll (col::sheet);
     const auto b = getLocalBounds().toFloat();
     caption (g, text, b, juce::Justification::centredLeft, isMouseOver() ? col::ink : col::inkSoft, 9.5f);
     g.setFont (label (9.5f));

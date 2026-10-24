@@ -46,7 +46,7 @@ void caption (juce::Graphics& g, const juce::String& s, juce::Rectangle<float> a
 void sectionTag (juce::Graphics& g, juce::String letter, const juce::String& name, juce::Point<float> p)
 {
     const juce::Rectangle<float> box (p.x, p.y, 13.f, 13.f);
-    g.setColour (col::ink);
+    g.setColour (col::inkSoft);
     g.drawRect (box, 1.f);
     g.setFont (label (9.f));
     g.drawText (letter, box.translated (0.5f, 0.f), juce::Justification::centred, false);
@@ -76,6 +76,23 @@ void hatch (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c, float s
     }
     g.setColour (c);
     g.strokePath (p, juce::PathStrokeType (thickness));
+}
+
+void plotWell (juce::Graphics& g, juce::Rectangle<float> plot)
+{
+    g.setColour (col::well);
+    g.fillRect (plot);
+}
+
+void readoutBox (juce::Graphics& g, juce::Rectangle<float> box, const juce::String& s)
+{
+    g.setColour (col::raised);
+    g.fillRect (box);
+    g.setColour (col::rim);
+    g.drawRect (box, 1.f);
+    g.setColour (col::ink);
+    g.setFont (mono (10.f));
+    g.drawText (s, box, juce::Justification::centred, false);
 }
 
 void paintOffscreen (juce::Graphics& g, juce::Rectangle<int> bounds, juce::Image& buffer,

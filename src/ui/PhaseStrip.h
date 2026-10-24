@@ -6,7 +6,7 @@
 
 // Phase of the track against the reference across frequency, from what has
 // been playing for the last few seconds: dotted = as the track arrives,
-// vermilion = with the current correction. Dots grow with the band's level and
+// accent = with the current correction. Dots grow with the band's level and
 // fade where the band doesn't add up coherently. Beyond +-90 degrees the two
 // cancel; that zone is shaded. Hover for a reading.
 class PhaseStrip : public juce::Component

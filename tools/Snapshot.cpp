@@ -259,7 +259,7 @@ int main (int argc, char** argv)
 
         // PFSNAP_SPLIT=0 (above): blocks run through the loop's end.
         // PFSNAP_TRIGGER=0/1/2 (hit/beat/bar), PFSNAP_BARS=bars or PFSNAP_ZOOM=ms: scope settings for the shot.
-        // PFSNAP_PHASE=degrees: the phase knob.
+        // PFSNAP_PHASE=degrees: the phase knob. PFSNAP_SCALE=1: render at 1x (default 2x, a Retina window).
         if (auto* t = std::getenv ("PFSNAP_TRIGGER")) proc.scopeTrigger = (PhaseFuckerProcessor::Trigger) juce::jlimit (0, 2, juce::String (t).getIntValue());
         if (auto* z = std::getenv ("PFSNAP_ZOOM")) { proc.scopeZoomMs = juce::String (z).getFloatValue(); proc.scopeBars = 0.f; }
         if (auto* b = std::getenv ("PFSNAP_BARS")) proc.scopeBars = juce::String (b).getFloatValue();
@@ -287,7 +287,8 @@ int main (int argc, char** argv)
             continue;
         }
 
-        const auto img = editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.f);
+        const float scale = std::getenv ("PFSNAP_SCALE") != nullptr ? juce::jlimit (1.f, 4.f, juce::String (std::getenv ("PFSNAP_SCALE")).getFloatValue()) : 2.f;
+        const auto img = editor->createComponentSnapshot (editor->getLocalBounds(), true, scale);
         const auto file = outDir.getChildFile ("phasefucker_" + state + ".png");
         file.deleteFile();
         juce::FileOutputStream os (file);

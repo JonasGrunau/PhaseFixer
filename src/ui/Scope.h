@@ -4,7 +4,7 @@
 #include "plugin/PluginProcessor.h"
 
 // Both waveforms over each other: reference in ink, corrected track in
-// vermilion, the track as it was in vermilion dots, and the area between
+// the accent, the track as it was in accent dots, and the area between
 // reference and track hatched (what cancels).
 //
 // What the window starts on (the trigger), switchable in the header:

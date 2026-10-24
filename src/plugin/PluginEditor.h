@@ -51,7 +51,7 @@ private:
     static juce::Rectangle<int> footerArea() { return { 24, 596, 832, 20 }; }
 
     PhaseFuckerProcessor& proc;
-    PaperLookAndFeel lnf;
+    SheetLookAndFeel lnf;
     Sheet sheet { *this };
 
     LevelMeter refMeter { "Ref" }, trackMeter { "Track" };

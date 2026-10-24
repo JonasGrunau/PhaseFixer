@@ -118,7 +118,7 @@ void MapLane::paint (juce::Graphics& g)
 
 void MapLane::draw (juce::Graphics& g)
 {
-    g.fillAll (col::paper);
+    g.fillAll (col::sheet);
     const auto plot = plotArea();
 
     sectionTag (g, "B", "Phase map", { 0.f, 4.f });
@@ -147,9 +147,7 @@ void MapLane::draw (juce::Graphics& g)
                  r, juce::Justification::centredRight, col::inkSoft, 9.5f);
 
         const auto c = clearArea().reduced (1.f);
-        g.setColour (col::paper);
-        g.fillRoundedRectangle (c, kRadius);
-        g.setColour (col::ink);
+        g.setColour (col::inkSoft);
         g.drawRoundedRectangle (c, kRadius, 1.f);
         caption (g, "Clear", c, juce::Justification::centred, col::ink, 9.f);
     }
@@ -162,6 +160,7 @@ void MapLane::draw (juce::Graphics& g)
     while (every * barPx < 60.0) every *= 2;
 
     // Grid: beats faint, bars and the zero line stronger.
+    plotWell (g, plot);
     {
         juce::Path minor, major;
         for (double b = fromPpq; b <= toPpq + 1e-6; b += beatLength)
@@ -252,7 +251,7 @@ void MapLane::draw (juce::Graphics& g)
         // Dense maps (a whole song) get smaller dots, so they don't run into one line.
         const float d = i == hover || i == dragIndex ? 9.f : juce::jlimit (3.f, 7.f, room - 1.f);
         const auto dot = juce::Rectangle<float> (d, d).withCentre ({ x, y });
-        g.setColour (p.edited ? col::paper : col::accent);
+        g.setColour (p.edited ? col::well : col::accent);
         g.fillEllipse (dot);
         if (p.edited)
         {
@@ -283,11 +282,7 @@ void MapLane::draw (juce::Graphics& g)
         const float x = xOf (p.ppq);
         auto box = juce::Rectangle<float> (x + 10.f, plot.getBottom() - 21.f, w, 17.f);
         if (box.getRight() > plot.getRight()) box.setX (x - 10.f - w);
-        g.setColour (col::paper);
-        g.fillRect (box);
-        g.setColour (col::ink);
-        g.drawRect (box, 1.f);
-        g.drawText (txt, box, juce::Justification::centred, false);
+        readoutBox (g, box, txt);
     }
 }
 

@@ -63,7 +63,7 @@ The 24-bit WAVs are kept in `~/Music/PhaseFucker`.
 
 ### What you see
 
-- **A — Scope**: reference (ink) and track (vermilion) over each other, the
+- **A — Scope**: reference (white) and track (orange) over each other, the
   uncorrected track dotted, and the area between them hatched: that is what
   cancels. *TRIGGER* sets where the window starts: **BAR** (default) or
   **BEAT** of the DAW's timeline, so the picture stands still while the song
@@ -77,7 +77,7 @@ The 24-bit WAVs are kept in `~/Music/PhaseFucker`.
   fine), *HOLD* freezes the picture. Trigger, bars and zoom are saved with the
   session.
 - **B — Phase / frequency**: the track's phase against the reference per
-  1/6 octave, as it arrives (grey) and corrected (vermilion). Dots grow with
+  1/6 octave, as it arrives (grey) and corrected (orange). Dots grow with
   level and fade where a band doesn't add up coherently. Beyond ±90° the two
   cancel. Top right: how much louder the low end sums now than uncorrected.
 - **B — Phase map** (per hit, instead of the phase strip): see above.

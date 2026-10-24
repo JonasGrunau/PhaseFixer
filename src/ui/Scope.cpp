@@ -303,7 +303,7 @@ void Scope::paint (juce::Graphics& g)
 
 void Scope::draw (juce::Graphics& g)
 {
-    g.fillAll (col::paper);
+    g.fillAll (col::sheet);
     const auto plot = plotArea();
     const float span = this->span(), t0 = -startOffset();
     const auto xAt = [&] (float ms) { return plot.getX() + (ms - t0) / span * plot.getWidth(); };
@@ -312,11 +312,11 @@ void Scope::draw (juce::Graphics& g)
 
     // Trigger switch and HOLD: small tags, the active one inked.
     const auto tag = [&] (juce::Rectangle<float> r, const juce::String& name, bool on) {
-        g.setColour (on ? col::ink : col::paper);
+        g.setColour (on ? col::ink : col::sheet);
         g.fillRoundedRectangle (r.reduced (1.f, 1.f), kRadius);
-        g.setColour (col::ink);
+        g.setColour (on ? col::ink : col::inkSoft);
         g.drawRoundedRectangle (r.reduced (1.f, 1.f), kRadius, 1.f);
-        caption (g, name, r, juce::Justification::centred, on ? col::paper : col::ink, 9.f);
+        caption (g, name, r, juce::Justification::centred, on ? col::sheet : col::ink, 9.f);
     };
     caption (g, "Trigger", { 96.f, 3.f, 52.f, 15.f }, juce::Justification::centredLeft, col::inkSoft, 9.f);
     for (int i = 0; i < 3; ++i)
@@ -349,6 +349,7 @@ void Scope::draw (juce::Graphics& g)
 
     // Grid: one fill per colour.
     const float step = gridStep (span);
+    plotWell (g, plot);
     {
         juce::Path minor, major;
         for (float t = std::ceil (t0 / (step / 5.f)) * (step / 5.f); t <= t0 + span; t += step / 5.f)
@@ -587,7 +588,7 @@ void Scope::draw (juce::Graphics& g)
                 const auto txt = signedNumber (p.deg, 0) + juce::String (juce::CharPointer_UTF8 ("\xc2\xb0"));
                 const float w = textWidth (g.getCurrentFont(), txt) + 6.f;
                 const auto box = juce::Rectangle<float> (x + 2.f, plot.getBottom() - 15.f, w, 13.f);
-                g.setColour (col::paper);
+                g.setColour (col::well);
                 g.fillRect (box);
                 g.setColour (col::accent);
                 g.drawText (txt, box, juce::Justification::centred, false);

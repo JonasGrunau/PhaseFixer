@@ -4,11 +4,11 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
-// Popup menus and text entry on paper.
-class PaperLookAndFeel : public juce::LookAndFeel_V4
+// Popup menus and text entry on the sheet.
+class SheetLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
-    PaperLookAndFeel();
+    SheetLookAndFeel();
     juce::Font getPopupMenuFont() override { return theme::mono (12.f); }
     void drawPopupMenuBackground (juce::Graphics&, int width, int height) override;
     void drawPopupMenuItem (juce::Graphics&, const juce::Rectangle<int>& area, bool isSeparator, bool isActive,
@@ -18,11 +18,11 @@ public:
     void drawCornerResizer (juce::Graphics&, int w, int h, bool isMouseOver, bool isMouseDragging) override;
 };
 
-// Every control paints its own paper and is opaque, so repainting one never
+// Every control paints its own sheet and is opaque, so repainting one never
 // repaints the sheet behind it.
 
-// A measuring dial on a parameter: paper disc, ink ring with fine ticks, a
-// pointer with a vermilion tip. Drag up/down (Shift = fine), wheel, double-
+// A measuring dial on a parameter: raised disc, ink ring with fine ticks, a
+// pointer with an accent tip. Drag up/down (Shift = fine), wheel, double-
 // click to type a value, Alt/Cmd-click to reset.
 class Dial : public juce::Component
 {
@@ -60,7 +60,7 @@ private:
     std::unique_ptr<juce::TextEditor> entry;
 };
 
-// A square key bound to an on/off parameter. On = solid ink (or vermilion
+// A square key bound to an on/off parameter. On = solid ink (or the accent
 // when it flags an unusual state, like A/B compare).
 class Key : public juce::Component
 {
@@ -91,7 +91,7 @@ public:
     TagSwitch (juce::RangedAudioParameter& p, juce::StringArray names);
 
     int getIndex() const noexcept { return index; }
-    // Outline one (unselected) tag in vermilion: "this would be better". -1: none.
+    // Outline one (unselected) tag in the accent: "this would be better". -1: none.
     void setHint (int i) { if (i != hint) { hint = i; repaint(); } }
     std::function<void()> onChange;
 
@@ -106,8 +106,8 @@ private:
     int index = 0, hint = -1;
 };
 
-// The ALIGN key. Ink block at rest; while listening it turns to paper with a
-// vermilion bar filling as shared signal comes in; "ALIGNED" stamp after.
+// The ALIGN key. Ink block at rest; while listening it turns to the sheet with an
+// accent bar filling as shared signal comes in; "ALIGNED" stamp after.
 class AlignKey : public juce::Component
 {
 public:

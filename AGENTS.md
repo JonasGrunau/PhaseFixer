@@ -35,13 +35,13 @@ Automatic phase alignment plugin (VST3 / AU / Standalone, JUCE 8), working like 
 
 ### Testing Requirements
 - After core changes: `./build-core/phasefucker_tests` must pass (Hilbert flatness, rotation accuracy and latency, click-free arc glides, offline render = real time, detected angle within 1°, per-hit angles within 3°, polarity, colouring + bleed, delayed kick within 0.5 dB of the best low end, time anchor, silence, sample rates, phase map transitions, loop wrap and merging, capture timeline incl. a wrap inside a capture block).
-- After UI changes: build `phasefucker_snapshot`, render `<dir>` and read the PNGs. `PFSNAP_PHASE=<deg>` sets the phase knob (per hit: the offset); `PFSNAP_SPLIT=0` runs host blocks through the loop's end; `longmap` is a 96-bar map.
+- After UI changes: build `phasefucker_snapshot`, render `<dir>` and read the PNGs (2x; `PFSNAP_SCALE=1` for 1x). `PFSNAP_PHASE=<deg>` sets the phase knob (per hit: the offset); `PFSNAP_SPLIT=0` runs host blocks through the loop's end; `longmap` is a 96-bar map.
 - Before a release: `auval -v aufx PhFk Jgru` and pluginval at strictness 5 on both formats.
 
 ### Common Patterns
 - Namespaces: `pf` (core), `pf::dsp` (primitives), `theme` (UI tokens and helpers). Plugin/UI classes are global.
 - JUCE-style formatting: space before call parens `foo (x)`, 4-space indent, braces on their own line.
-- Look: paper `#EEEAE0`, ink `#141414`, one accent vermilion `#E2401C`; no gradients, shadows or glow; corner radius 2 px; IBM Plex Sans Condensed labels, IBM Plex Mono numbers.
+- Look: the SDK's night sheet: sheet `#131211`, plots in the well `#0C0B0A`, bone ink `#ECE7DB`, one accent orange `#FF8505` (the old vermilion's direction, lifted for the dark: 7.7:1 on the sheet, OKLab ΔE ≥ 0.2 from the sibling plugins' accents). Every colour is a role of `theme::palette` in `src/ui/Theme.h` (`sheet`, `well`, `raised`, `ink`…`accentWash`); never a hex value or `brighter()`/`darker()` at a call site. The light `paper` variant is kept there and swaps in with one line. No gradients, shadows or glow; corner radius 2 px; IBM Plex Sans Condensed labels, IBM Plex Mono numbers.
 
 ## Dependencies
 - JUCE 8.0.15 (AGPLv3), Catch2 v3.7.1, C++20, CMake ≥ 3.24, macOS deployment target 11.0

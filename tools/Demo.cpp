@@ -230,19 +230,19 @@ private:
     int capacity = 0, delayPos = 0;
 };
 
-// Paper-coloured buttons and menus for the transport bar.
-class BarLookAndFeel : public PaperLookAndFeel
+// House-style buttons and menus for the transport bar.
+class BarLookAndFeel : public SheetLookAndFeel
 {
 public:
     BarLookAndFeel()
     {
-        setColour (juce::TextButton::buttonColourId, col::paper);
+        setColour (juce::TextButton::buttonColourId, col::sheet);
         setColour (juce::TextButton::buttonOnColourId, col::ink);
         setColour (juce::TextButton::textColourOffId, col::ink);
-        setColour (juce::TextButton::textColourOnId, col::paper);
-        setColour (juce::ComboBox::backgroundColourId, col::paper);
+        setColour (juce::TextButton::textColourOnId, col::sheet);
+        setColour (juce::ComboBox::backgroundColourId, col::sheet);
         setColour (juce::ComboBox::textColourId, col::ink);
-        setColour (juce::ComboBox::outlineColourId, col::ink);
+        setColour (juce::ComboBox::outlineColourId, col::inkSoft);
         setColour (juce::ComboBox::arrowColourId, col::ink);
     }
     juce::Font getTextButtonFont (juce::TextButton&, int) override { return label (10.f); }
@@ -257,14 +257,15 @@ public:
         }
         else
         {
-            g.setColour (col::ink);
-            g.drawRoundedRectangle (r, kRadius, over ? 1.8f : 1.f);
+            g.setColour (over ? col::ink : col::inkSoft);
+            g.drawRoundedRectangle (r, kRadius, 1.f);
         }
     }
     void drawComboBox (juce::Graphics& g, int w, int h, bool, int, int, int, int, juce::ComboBox&) override
     {
-        g.setColour (col::ink);
+        g.setColour (col::inkSoft);
         g.drawRoundedRectangle (juce::Rectangle<float> ((float) w, (float) h).reduced (0.5f), kRadius, 1.f);
+        g.setColour (col::ink);
         juce::Path arrow;
         arrow.addTriangle ((float) w - 16.f, (float) h * 0.5f - 2.f, (float) w - 8.f, (float) h * 0.5f - 2.f, (float) w - 12.f, (float) h * 0.5f + 3.f);
         g.fillPath (arrow);
@@ -331,9 +332,9 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        g.fillAll (col::paper);
+        g.fillAll (col::sheet);
         auto bar = getLocalBounds().removeFromTop (kBar).toFloat();
-        g.setColour (col::ink);
+        g.setColour (col::hairline);
         g.fillRect (bar.removeFromBottom (1.f));
         caption (g, "Demo host", { 24.f, 6.f, 100.f, 12.f }, juce::Justification::centredLeft, col::accent, 9.f);
         g.setFont (mono (10.f));
@@ -436,7 +437,7 @@ private:
     struct Window : juce::DocumentWindow
     {
         explicit Window (std::unique_ptr<DemoComponent> content)
-            : DocumentWindow ("PhaseFucker Demo", col::paper, DocumentWindow::closeButton | DocumentWindow::minimiseButton)
+            : DocumentWindow ("PhaseFucker Demo", col::sheet, DocumentWindow::closeButton | DocumentWindow::minimiseButton)
         {
             setUsingNativeTitleBar (true);
             setContentOwned (content.release(), true);

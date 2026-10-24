@@ -44,11 +44,12 @@ void ExportKey::refresh()
 
 void ExportKey::paint (juce::Graphics& g)
 {
-    g.fillAll (col::paper);
+    g.fillAll (col::sheet);
     const auto r = getLocalBounds().toFloat().reduced (1.f);
     const bool live = info.stage == Stage::recording;
     const bool solid = live || info.stage == Stage::ready;
-    const auto c = live || info.stage == Stage::armed || info.stage == Stage::failed ? col::accent : col::ink;
+    const bool loud = live || info.stage == Stage::armed || info.stage == Stage::failed;
+    const auto c = loud ? col::accent : col::ink;
     if (solid)
     {
         g.setColour (c);
@@ -56,10 +57,10 @@ void ExportKey::paint (juce::Graphics& g)
     }
     else
     {
-        g.setColour (c);
-        g.drawRoundedRectangle (r, kRadius, isMouseOver() ? 1.6f : 1.f);
+        g.setColour (loud || isMouseOver() ? c : col::inkSoft);
+        g.drawRoundedRectangle (r, kRadius, loud && isMouseOver() ? 1.6f : 1.f);
     }
-    caption (g, shown, r, juce::Justification::centred, solid ? col::paper : c, 9.f);
+    caption (g, shown, r, juce::Justification::centred, solid ? col::sheet : c, 9.f);
 }
 
 void ExportKey::mouseDown (const juce::MouseEvent& e)

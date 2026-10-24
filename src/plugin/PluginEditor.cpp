@@ -91,7 +91,7 @@ void PhaseFuckerEditor::layout()
 void PhaseFuckerEditor::Sheet::paint (juce::Graphics& g)
 {
     auto& ed = editor;
-    g.fillAll (col::paper);
+    g.fillAll (col::sheet);
     cropMarks (g, getLocalBounds().toFloat().reduced (8.f), 7.f);
 
     // Wordmark.
@@ -110,7 +110,7 @@ void PhaseFuckerEditor::Sheet::paint (juce::Graphics& g)
     g.drawText (juce::String (juce::CharPointer_UTF8 ("LINEAR-PHASE ALIGNMENT \xc2\xb7 PF-1 \xc2\xb7 v")) + JucePlugin_VersionString,
                 juce::Rectangle<float> (24.f, 46.f, 330.f, 14.f), juce::Justification::centredLeft, false);
 
-    g.setColour (col::ink);
+    g.setColour (col::headerRule);
     g.fillRect (24.f, 76.f, 832.f, 1.5f);
 
     // Section C.
@@ -204,7 +204,7 @@ void PhaseFuckerEditor::Sheet::paint (juce::Graphics& g)
     }
 
     // Footer.
-    g.setColour (col::ink);
+    g.setColour (col::footerRule);
     g.fillRect (24.f, 594.f, 832.f, 1.f);
     const auto foot = juce::Rectangle<float> (24.f, 597.f, 832.f, 18.f);
     g.setFont (mono (10.5f));
