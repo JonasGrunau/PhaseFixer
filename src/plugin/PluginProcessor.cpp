@@ -666,6 +666,7 @@ void PhaseFuckerProcessor::getStateInformation (juce::MemoryBlock& destData)
     tree.setProperty ("scopeTrigger", (int) scopeTrigger, nullptr);
     tree.setProperty ("scopeZoom", scopeZoomMs, nullptr);
     tree.setProperty ("scopeBars", scopeBars, nullptr);
+    tree.setProperty ("scopePan", scopePanMs, nullptr);
     const auto st = getAlignState();
     if (st.hasResult)
     {
@@ -715,6 +716,7 @@ void PhaseFuckerProcessor::setStateInformation (const void* data, int sizeInByte
     scopeTrigger = (Trigger) juce::jlimit (0, 2, (int) tree.getProperty ("scopeTrigger", (int) Trigger::bar));
     scopeZoomMs = (float) tree.getProperty ("scopeZoom", 1000.f);
     scopeBars = juce::jlimit (0.f, 4.f, (float) tree.getProperty ("scopeBars", 0.5f));
+    scopePanMs = (float) tree.getProperty ("scopePan", 0.f);
     const auto res = tree.getChildWithName ("Result");
     tree.removeChild (res, nullptr);
     const auto saved = tree.getChildWithName ("Map");

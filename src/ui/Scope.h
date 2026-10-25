@@ -22,8 +22,10 @@
 // in dBFS (the track is drawn at the reference's level).
 //
 // How much it shows: BARS (1/4 to 4 bars, following the tempo; 1/2 by
-// default, two kicks and what the bass does between them), or any length the
-// wheel zooms to (2 ms - 8 s). Double-click goes back to the bar length.
+// default, two kicks and what the bass does between them), or any length
+// scrolling up and down (or a pinch) zooms to (2 ms - 8 s), around the
+// pointer. Zoomed in, scrolling sideways moves the window through the bar
+// length, as in Ableton. Double-click goes back to the bar length.
 // The height is measured over the bar length (or the zoomed window, when
 // wider), once per grab, so zooming and turning don't move it.
 //
@@ -38,6 +40,7 @@ public:
     void showHit (juce::int64 sample, int holdMs);    // jump to the hit an analysis used (HIT trigger)
     void setZoom (float ms);    // free zoom, in ms
     void setBars (float bars);  // window length in bars
+    float windowStart() const;  // ms from the anchor where the window starts (moved by scrolling sideways)
 
     static constexpr float kMinZoom = 2.f, kMaxZoom = 8000.f, kMaxSpan = 12000.f;
     static constexpr float kBarChoices[] = { 0.25f, 0.5f, 1.f, 2.f, 4.f };
@@ -48,6 +51,7 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    void mouseMagnify (const juce::MouseEvent&, float scaleFactor) override;
     void mouseMove (const juce::MouseEvent&) override;
     void mouseEnter (const juce::MouseEvent& e) override { mouseMove (e); repaint(); }
     void mouseExit (const juce::MouseEvent&) override { repaint(); }
@@ -63,8 +67,9 @@ private:
     float span() const;                                 // ms the window shows
     float barSpan (float bars) const;                   // ms of that many bars at the tempo
     float grabSpan() const;                             // ms a grab holds: at least the bar length
-    float startOffset (float span) const;               // ms shown before the anchor
-    float startOffset() const { return startOffset (span()); }
+    float startOffset (float span) const;               // ms shown before the anchor, not moved
+    void moveTo (float startMs);                        // zoomed in: start the window there (kept within the grab)
+    void zoomAround (float ms, float x);                // zoom, keeping the moment at x in place
     bool grab (const pf::Capture& cap, juce::int64 anchor, bool findOnset);
     void recompute();
     double ppqAt (double index) const;      // timeline position of a grabbed sample, NaN if unknown

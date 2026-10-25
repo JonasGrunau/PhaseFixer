@@ -26,6 +26,7 @@ Automatic phase alignment plugin (VST3 / AU / Standalone, JUCE 8), working like 
 - Never include JUCE from `src/core`. New `.cpp` files go into `CMakeLists.txt` by hand.
 - Audio thread: no allocation or locks in `processBlock` / `Rotator::process` / `Capture::push`. The capture is reallocated only in `prepareToPlay`, under `captureLock`; readers go through `withCapture`. The map is read with a try-lock (a miss holds the last turn); export buffers are sized on the message thread while the export is idle, and stage changes are atomic compare-exchanges.
 - Map timing: a block's output is `latency` samples late, so `turnFor` looks up the map at the block's ppq minus the latency plus one glide (`timelineBefore`: right after a loop wraps, that is the end of the last pass), passing the host's loop to `angleAt`. The scope and the map lane pass the loop too.
+- Scope window: `Scope::windowStart()` is `scopePanMs` minus the default lead-in, clamped within the grab (the bar length). Sideways scroll moves it (that delta already follows the OS direction: no `isReversed`); vertical scroll and pinch zoom around the pointer. `panned` renders it.
 - Loop wraps: some hosts end a block at the loop's end, others run through it and report only where each block starts. `readTransport` folds the expected position round the loop (a wrap is no jump) and sets `Transport::wrapAt`; the capture (`setTimeline` with the loop, `samplesToLoopEnd`) and the export recorder cut at that sample. `PFSNAP_SPLIT=0` runs the snapshot host through the loop's end; its export must match the split one.
 - The map is learned on a copy and swapped in under `mapLock`; edits go by ppq (`editMapPoint`), and every change calls `mapChanged()`, which marks the session dirty (VST3; AU ignores it).
 - Analysis results become parameter changes on the message thread (`applyResult`), so they are undoable and automatable.
@@ -35,12 +36,13 @@ Automatic phase alignment plugin (VST3 / AU / Standalone, JUCE 8), working like 
 
 ### Testing Requirements
 - After core changes: `./build-core/phasefucker_tests` must pass (Hilbert flatness, rotation accuracy and latency, click-free arc glides, offline render = real time, detected angle within 1°, per-hit angles within 3°, polarity, colouring + bleed, delayed kick within 0.5 dB of the best low end, time anchor, silence, sample rates, phase map transitions, loop wrap and merging, capture timeline incl. a wrap inside a capture block).
-- After UI changes: build `phasefucker_snapshot`, render `<dir>` and read the PNGs (2x; `PFSNAP_SCALE=1` for 1x). `PFSNAP_PHASE=<deg>` sets the phase knob (per hit: the offset); `PFSNAP_SPLIT=0` runs host blocks through the loop's end; `longmap` is a 96-bar map.
+- After UI changes: build `phasefucker_snapshot`, render `<dir>` and read the PNGs (2x; `PFSNAP_SCALE=1` for 1x). `PFSNAP_PHASE=<deg>` sets the phase knob (per hit: the offset); `PFSNAP_SPLIT=0` runs host blocks through the loop's end; `longmap` is a 96-bar map. `phasefucker_snapshot <dir> gestures` drives the knob, readout and scope gestures through their handlers and exits 1 on a FAIL.
 - Before a release: `auval -v aufx PhFk Jgru` and pluginval at strictness 5 on both formats.
 
 ### Common Patterns
 - Namespaces: `pf` (core), `pf::dsp` (primitives), `theme` (UI tokens and helpers). Plugin/UI classes are global.
 - JUCE-style formatting: space before call parens `foo (x)`, 4-space indent, braces on their own line.
+- Knob gestures (the house rule): double-click or Alt/Cmd-click resets to the default; only a double-click on the number types a value (`Dial::mouseDoubleClick`: the number's hit box is its text width + 8 px, at least 24 px, on the value line). The phase dial hides its number, so a double-click on it only resets, and its big readout takes the typing double-click (`Sheet::mouseDoubleClick`, the field opens over the readout).
 - Look: the SDK's night sheet: sheet `#131211`, plots in the well `#0C0B0A`, bone ink `#ECE7DB`, one accent orange `#FF8505` (the old vermilion's direction, lifted for the dark: 7.7:1 on the sheet, OKLab ΔE ≥ 0.2 from the sibling plugins' accents). Every colour is a role of `theme::palette` in `src/ui/Theme.h` (`sheet`, `well`, `raised`, `ink`…`accentWash`); never a hex value or `brighter()`/`darker()` at a call site. The light `paper` variant is kept there and swaps in with one line. No gradients, shadows or glow; corner radius 2 px; IBM Plex Sans Condensed labels, IBM Plex Mono numbers.
 
 ## Dependencies

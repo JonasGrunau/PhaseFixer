@@ -168,6 +168,7 @@ public:
     Trigger scopeTrigger = Trigger::bar;
     float scopeZoomMs = 1000.f;
     float scopeBars = 0.5f;   // window length in bars (follows the tempo); 0: free zoom (scopeZoomMs)
+    float scopePanMs = 0.f;   // zoomed in: how far the window is moved from where it starts (ms)
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();

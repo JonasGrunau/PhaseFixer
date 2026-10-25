@@ -22,8 +22,9 @@ public:
 // repaints the sheet behind it.
 
 // A measuring dial on a parameter: raised disc, ink ring with fine ticks, a
-// pointer with an accent tip. Drag up/down (Shift = fine), wheel, double-
-// click to type a value, Alt/Cmd-click to reset.
+// pointer with an accent tip. Drag up/down (Shift = fine), wheel. Double-
+// click resets it to the default; only a double-click on its number types a
+// value. Alt/Cmd-click resets too.
 class Dial : public juce::Component
 {
 public:
@@ -31,10 +32,15 @@ public:
 
     void setDimmed (bool d) { dimmed = d; repaint(); }
     void setLabel (const juce::String& n) { if (n != name) { name = n; repaint(); } }
-    void setShowsValue (bool s) { showsValue = s; repaint(); }
+    void setShowsValue (bool s) { showsValue = s; repaint(); }   // false: a big readout elsewhere shows the value
     void setBipolar (bool b) { bipolar = b; repaint(); }
     float getValue() const noexcept { return value; }
     std::function<void()> onValueChange;
+
+    // A text field over the number that shows this dial's value, in `host`
+    // (the dial itself, or the component drawing its readout), in that font.
+    void openEntry (juce::Component& host, juce::Rectangle<int> area, const juce::Font& font, juce::Justification j);
+    bool isTyping() const noexcept { return entry != nullptr; }
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -48,7 +54,9 @@ public:
 
 private:
     juce::Rectangle<float> discArea() const;
+    juce::Rectangle<float> valueArea() const;   // the value line under the name
     void nudge (float deltaNorm, bool asGesture);
+    void resetToDefault();
 
     juce::RangedAudioParameter& param;
     juce::String name;

@@ -80,10 +80,16 @@ juce::Rectangle<float> Dial::discArea() const
     return juce::Rectangle<float> (d, d).withCentre ({ b.getCentreX(), b.getY() + d * 0.5f });
 }
 
+juce::Rectangle<float> Dial::valueArea() const
+{
+    // 2 px gap, the 13 px name line, then the 15 px value line.
+    return getLocalBounds().toFloat().withTop (discArea().getBottom() + 15.f).withHeight (15.f);
+}
+
 void Dial::resized()
 {
-    if (entry != nullptr)
-        entry->setBounds (getLocalBounds().removeFromBottom (18).reduced (2, 0));
+    if (entry != nullptr && entry->getParentComponent() == this)
+        entry->setBounds (valueArea().withSizeKeepingCentre ((float) getWidth() - 4.f, 18.f).toNearestInt().constrainedWithin (getLocalBounds()));
 }
 
 void Dial::paint (juce::Graphics& g)
@@ -150,11 +156,16 @@ void Dial::nudge (float delta, bool asGesture)
     else attachment.setValueAsCompleteGesture (plain);
 }
 
+void Dial::resetToDefault()
+{
+    attachment.setValueAsCompleteGesture (param.convertFrom0to1 (param.getDefaultValue()));
+}
+
 void Dial::mouseDown (const juce::MouseEvent& e)
 {
     if (e.mods.isAltDown() || e.mods.isCommandDown())
     {
-        attachment.setValueAsCompleteGesture (param.convertFrom0to1 (param.getDefaultValue()));
+        resetToDefault();
         return;
     }
     dragging = true;
@@ -185,23 +196,49 @@ void Dial::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDeta
     nudge (d * 0.06f * (e.mods.isShiftDown() ? 0.1f : 1.f), false);
 }
 
-void Dial::mouseDoubleClick (const juce::MouseEvent&)
+void Dial::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    // The second click opened a drag gesture: close it before writing the value.
+    if (dragging)
+    {
+        dragging = false;
+        attachment.endGesture();
+        repaint();
+    }
+
+    // Only the number types a value; anywhere else on the dial resets it.
+    const auto v = valueArea();
+    const auto number = v.withSizeKeepingCentre (std::max (24.f, textWidth (mono (11.f), format (value)) + 8.f), v.getHeight());
+    if (showsValue && number.contains (e.position))
+        openEntry (*this, v.withSizeKeepingCentre ((float) getWidth() - 4.f, 18.f).toNearestInt().constrainedWithin (getLocalBounds()),
+                   mono (11.f), juce::Justification::centred);
+    else
+        resetToDefault();
+}
+
+void Dial::openEntry (juce::Component& host, juce::Rectangle<int> area, const juce::Font& font, juce::Justification j)
 {
     // Already typing: replacing the editor would close the new one as the old one loses focus.
     if (entry != nullptr) return;
     entry = std::make_unique<juce::TextEditor>();
-    entry->setFont (mono (11.f));
-    entry->setJustification (juce::Justification::centred);
-    entry->setText (format (value).upToFirstOccurrenceOf (" ", false, false), false);
+    entry->setFont (font);
+    entry->setJustification (j);
+    // The number without its unit.
+    entry->setText (format (value).upToFirstOccurrenceOf (" ", false, false).replace (juce::CharPointer_UTF8 ("\xc2\xb0"), ""), false);
     entry->setIndents (2, 1);
-    addAndMakeVisible (*entry);
-    resized();
+    host.addAndMakeVisible (*entry);
+    entry->setBounds (area);
     entry->selectAll();
     entry->grabKeyboardFocus();
 
+    // Never delete the editor inside its own callback: close it asynchronously.
     const auto close = [this] {
         juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<Dial> (this)] {
-            if (safe != nullptr) { safe->entry.reset(); safe->repaint(); }
+            if (safe == nullptr || safe->entry == nullptr) return;
+            if (auto* parent = safe->entry->getParentComponent(); parent != nullptr && parent != safe.getComponent())
+                parent->repaint (safe->entry->getBounds());   // the number it covered
+            safe->entry.reset();
+            safe->repaint();
         });
     };
     entry->onReturnKey = [this, close] {

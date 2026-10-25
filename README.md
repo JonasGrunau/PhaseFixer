@@ -71,11 +71,13 @@ The 24-bit WAVs are kept in `~/Music/PhaseFucker`.
   running transport BAR/BEAT show hits and say so. *BARS* sets how much it
   shows, ¼ to 4 bars at the song's tempo; the default ½ bar shows two kicks and
   what the bass does between them. Several bars step by that many from bar 1
-  (1–2, 3–4, …). The wheel zooms freely (2 ms – 8 s), double-click goes back to
-  the bar length. The height is set by the bar length and stays put while
-  you zoom or turn the phase. Drag sideways over the plot to turn the phase (Shift for
-  fine), *HOLD* freezes the picture. Trigger, bars and zoom are saved with the
-  session.
+  (1–2, 3–4, …). Scrolling up and down (or a pinch) zooms freely (2 ms – 8 s)
+  around the pointer; zoomed in, scrolling sideways moves through the bar
+  length, as in Ableton. Double-click goes back to the bar length. The height
+  is set by the bar length and stays put while you zoom or turn the phase.
+  Drag sideways over the plot to turn the phase (Shift for fine), *HOLD*
+  freezes the picture. Trigger, bars, zoom and scroll position are saved with
+  the session.
 - **B — Phase / frequency**: the track's phase against the reference per
   1/6 octave, as it arrives (grey) and corrected (orange). Dots grow with
   level and fade where a band doesn't add up coherently. Beyond ±90° the two
@@ -83,7 +85,9 @@ The 24-bit WAVs are kept in `~/Music/PhaseFucker`.
 - **B — Phase map** (per hit, instead of the phase strip): see above.
 - **C — Correction**: TURN (one for all, or per hit), PHASE (−180…+180°; per
   hit the offset on top of the map), polarity, A/B, the time anchor, and
-  export.
+  export. The PHASE dial drags up/down (Shift for fine), takes the mouse wheel
+  and resets to 0° on double-click or Alt/Cmd-click. To type an angle (per
+  hit: the offset), double-click the big number next to it.
 - **Time anchor**: how far apart the two tracks arrive. A rotation can't move
   a track in time; when they are far apart, one angle only fits part of the
   spectrum, and this tells you how much more you would get by moving the
@@ -161,8 +165,9 @@ no sidechain, the PER HIT hint, per hit, empty map, a 96-bar map, export) with
 the demo's scenarios (the `PF_DEMO_KIT` samples if set), no DAW needed;
 `PFSNAP_PHASE=<deg>` sets the phase knob first, `PFSNAP_SPLIT=0` plays host
 blocks straight through the loop's end (as some DAWs do). `roundtrip` checks
-the map survives a saved session. `... <dir> bench` times scope and editor paints
-instead.
+the map survives a saved session, `gestures` drives the knob, readout and scope
+gestures and exits 1 when a check fails. `... <dir> bench` times scope and
+editor paints instead.
 
 ### Trying it without a DAW
 

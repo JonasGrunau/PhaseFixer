@@ -88,6 +88,23 @@ void PhaseFuckerEditor::layout()
     compareKey.setBounds (420, 522, 54, 30);
 }
 
+juce::String PhaseFuckerEditor::readoutNumber()
+{
+    // Per hit: the turn playing now (map plus offset).
+    return degrees (perHitShown ? liveShown : proc.correction().phaseDeg);
+}
+
+void PhaseFuckerEditor::Sheet::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    // The phase dial shows its number here, so this is where it is typed
+    // (per hit: the offset). A double-click on the dial itself resets it.
+    const auto number = readoutNumberArea();
+    const float w = textWidth (monoStrong (30.f), editor.readoutNumber()) + 8.f;
+    if (number.withX (number.getX() - 4.f).withWidth (w).contains (e.position))
+        editor.phaseDial.openEntry (*this, number.withX (number.getX() - 4.f).withWidth (150.f).toNearestInt(), monoStrong (30.f),
+                                    juce::Justification::centredLeft);
+}
+
 void PhaseFuckerEditor::Sheet::paint (juce::Graphics& g)
 {
     auto& ed = editor;
@@ -128,10 +145,9 @@ void PhaseFuckerEditor::Sheet::paint (juce::Graphics& g)
         const bool off = ed.proc.isComparing();
         g.setFont (monoStrong (30.f));
         g.setColour (off ? col::inkFaint : col::ink);
-        juce::String big, line;
+        juce::String line;
         if (ed.perHitShown)
         {
-            big = degrees (ed.liveShown);
             line = off ? juce::String ("A/B: correction off")
                  : ed.mapPoints == 0 ? juce::String ("no map yet, ALIGN learns one")
                  : std::abs (c.totalDeg()) > 0.05 ? "map " + juce::String (c.totalDeg() > 0.0 ? "+ " : juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92 ")))
@@ -140,12 +156,12 @@ void PhaseFuckerEditor::Sheet::paint (juce::Graphics& g)
         }
         else
         {
-            big = degrees (c.phaseDeg);
             line = off ? juce::String ("A/B: correction off")
                  : c.invert ? "flipped, " + degrees (c.totalDeg()) + " in all"
                             : juce::String ("every frequency, linear phase");
         }
-        g.drawText (big, juce::Rectangle<float> (110.f, 506.f, 200.f, 36.f), juce::Justification::centredLeft, false);
+        if (! ed.phaseDial.isTyping())
+            g.drawText (ed.readoutNumber(), ed.readoutNumberArea(), juce::Justification::centredLeft, false);
         g.setFont (mono (10.f));
         g.setColour (col::inkSoft);
         g.drawText (line, juce::Rectangle<float> (112.f, 544.f, 200.f, 14.f), juce::Justification::centredLeft, false);

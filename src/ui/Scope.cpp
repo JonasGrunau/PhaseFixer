@@ -87,6 +87,31 @@ float Scope::startOffset (float s) const
     return (proc.scopeTrigger == Trigger::hit || fallback ? 0.2f : 0.04f) * s;
 }
 
+float Scope::windowStart() const
+{
+    // Zoomed in, the window can sit anywhere within what a grab holds (the
+    // bar length); zoomed out to it or further, it sits where it starts.
+    const float s = span(), g = grabSpan();
+    const float lo = -startOffset (g), hi = std::max (lo, g - startOffset (g) - s);
+    return juce::jlimit (lo, hi, proc.scopePanMs - startOffset (s));
+}
+
+void Scope::moveTo (float startMs)
+{
+    proc.scopePanMs = startMs + startOffset (span());
+    proc.scopePanMs = windowStart() + startOffset (span());   // kept within the grab
+    repaint();
+}
+
+void Scope::zoomAround (float ms, float x)
+{
+    const auto plot = plotArea();
+    const float f = juce::jlimit (0.f, 1.f, (x - plot.getX()) / plot.getWidth());
+    const float at = windowStart() + f * span();
+    setZoom (ms);
+    moveTo (at - f * span());
+}
+
 void Scope::setZoom (float ms)
 {
     zoomMs = juce::jlimit (kMinZoom, kMaxZoom, ms);
@@ -98,6 +123,7 @@ void Scope::setZoom (float ms)
 void Scope::setBars (float bars)
 {
     proc.scopeBars = lastBars = bars;
+    proc.scopePanMs = 0.f;
     refresh();
     repaint();
 }
@@ -305,7 +331,7 @@ void Scope::draw (juce::Graphics& g)
 {
     g.fillAll (col::sheet);
     const auto plot = plotArea();
-    const float span = this->span(), t0 = -startOffset();
+    const float span = this->span(), t0 = windowStart();
     const auto xAt = [&] (float ms) { return plot.getX() + (ms - t0) / span * plot.getWidth(); };
 
     sectionTag (g, "A", "Scope", { 0.f, 4.f });
@@ -607,7 +633,8 @@ void Scope::draw (juce::Graphics& g)
     if (isMouseOver() && ! dragging)
     {
         const juce::String dot2 (juce::CharPointer_UTF8 (" \xc2\xb7 "));
-        caption (g, (shownPerHit ? "Drag to turn the whole map" : "Drag to turn the phase") + dot2 + "Shift fine" + dot2 + "Wheel to zoom"
+        caption (g, (shownPerHit ? "Drag to turn the whole map" : "Drag to turn the phase") + dot2 + "Shift fine" + dot2 + "Scroll to zoom"
+                        + (span < grabSpan() - 0.5f ? dot2 + "sideways to move" : juce::String())
                         + dot2 + "Double-click: " + barsName (lastBars) + (lastBars > 1.f ? " bars" : " bar"),
                  plot.reduced (8.f, 6.f), juce::Justification::bottomRight, col::inkSoft, 9.f);
     }
@@ -677,9 +704,20 @@ void Scope::mouseDoubleClick (const juce::MouseEvent& e)
         setBars (lastBars);
 }
 
-void Scope::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& w)
+void Scope::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
 {
-    // From whatever is shown (a bar length too) into a free zoom.
-    const float d = std::abs (w.deltaY) > std::abs (w.deltaX) ? w.deltaY : -w.deltaX;
-    setZoom (span() * std::pow (1.25f, -d * 4.f * (w.isReversed ? -1.f : 1.f)));
+    // As in Ableton. Up and down zoom around the pointer, from whatever is
+    // shown (a bar length too) into a free zoom. Sideways moves through the
+    // grab; that delta already follows the OS scroll direction, like any
+    // scrolled content (the picture follows the fingers), so no isReversed.
+    if (std::abs (w.deltaX) > std::abs (w.deltaY))
+        moveTo (windowStart() - w.deltaX * 400.f / plotArea().getWidth() * span());
+    else
+        zoomAround (span() * std::pow (1.25f, -w.deltaY * 4.f * (w.isReversed ? -1.f : 1.f)), e.position.x);
+}
+
+void Scope::mouseMagnify (const juce::MouseEvent& e, float scaleFactor)
+{
+    if (scaleFactor > 0.f)
+        zoomAround (span() / scaleFactor, e.position.x);
 }

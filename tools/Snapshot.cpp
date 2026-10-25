@@ -23,6 +23,10 @@
 //              fresh instance and checks the map came back (no image)
 //   bench      aligned, then times scope paints at three zooms, the whole
 //              editor, and UI ticks, on a native (CoreGraphics) image at 2x
+//   typing     aligned, the phase readout double-clicked: the text field over it
+//   panned     aligned, zoomed in to 120 ms and scrolled sideways into the bar
+//   gestures   aligned, then drives the knob and scope gestures through their
+//              handlers and prints PASS/FAIL per check (no image; exit 1 on a FAIL)
 
 #include "DemoKit.h"
 #include "PsyLoop.h"
@@ -121,6 +125,159 @@ namespace
         for (int i = 0; i < runs; ++i) once();
         return (juce::Time::getMillisecondCounterHiRes() - t0) / runs;
     }
+
+    // A mouse event at `pos` on `c` (its own coordinates).
+    juce::MouseEvent mouseAt (juce::Component& c, juce::Point<float> pos, int clicks = 1)
+    {
+        const auto now = juce::Time::getCurrentTime();
+        return { juce::Desktop::getInstance().getMainMouseSource(), pos, {}, juce::MouseInputSource::defaultPressure,
+                 juce::MouseInputSource::defaultOrientation, juce::MouseInputSource::defaultRotation,
+                 juce::MouseInputSource::defaultTiltX, juce::MouseInputSource::defaultTiltY,
+                 &c, &c, now, pos, now, clicks, false };
+    }
+
+    // A double-click as JUCE delivers it: down, up, down, up, then the
+    // double-click (Component::internalMouseUp sends it after the second up).
+    void doubleClick (juce::Component& c, juce::Point<float> pos)
+    {
+        c.mouseDown (mouseAt (c, pos));
+        c.mouseUp (mouseAt (c, pos));
+        c.mouseDown (mouseAt (c, pos, 2));
+        c.mouseUp (mouseAt (c, pos, 2));
+        c.mouseDoubleClick (mouseAt (c, pos, 2));
+    }
+
+    // How deep a parameter's change gestures nest: a reset written inside an
+    // open drag gesture would reach 2.
+    struct GestureDepth : juce::AudioProcessorParameter::Listener
+    {
+        int depth = 0, deepest = 0;
+        void parameterValueChanged (int, float) override {}
+        void parameterGestureChanged (int, bool starting) override
+        {
+            depth += starting ? 1 : -1;
+            deepest = std::max (deepest, depth);
+        }
+    };
+
+    // A trackpad scroll (natural direction off).
+    void scroll (juce::Component& c, juce::Point<float> pos, float dx, float dy)
+    {
+        juce::MouseWheelDetails w;
+        w.deltaX = dx;
+        w.deltaY = dy;
+        w.isReversed = false;
+        w.isSmooth = true;
+        w.isInertial = false;
+        c.mouseWheelMove (mouseAt (c, pos), w);
+    }
+
+    juce::TextEditor* entryIn (juce::Component& c)
+    {
+        for (auto* child : c.getChildren())
+            if (auto* t = dynamic_cast<juce::TextEditor*> (child)) return t;
+        return nullptr;
+    }
+
+    // The knob and scope gestures, through their real handlers.
+    bool checkGestures (PhaseFuckerEditor& editor, PhaseFuckerProcessor& proc)
+    {
+        auto& sheet = *editor.getChildComponent (0);
+        auto* dial = dynamic_cast<Dial*> (sheet.getComponentAt (63, 530));
+        if (dial == nullptr) { std::printf ("FAIL no phase dial at (63, 530)\n"); return false; }
+        auto& phase = proc.param (ids::phase);
+        const auto deg = [&] { return phase.convertFrom0to1 (phase.getValue()); };
+        const auto set = [&] (float d) { phase.setValueNotifyingHost (phase.convertTo0to1 (d)); pump (20); };
+        bool ok = true;
+        const auto report = [&] (const char* what, bool pass) { std::printf ("%s %s\n", pass ? "PASS" : "FAIL", what); ok = ok && pass; };
+
+        set (40.f);
+        doubleClick (*dial, { 39.f, 30.f });   // the disc
+        report ("double-click on the knob resets it to 0", std::abs (deg()) < 0.05f && ! dial->isTyping());
+
+        set (40.f);
+        doubleClick (sheet, { 130.f, 524.f });   // the readout's number
+        auto* entry = entryIn (sheet);
+        report ("double-click on the readout number opens the field, value kept", dial->isTyping() && entry != nullptr && std::abs (deg() - 40.f) < 0.05f);
+        if (entry != nullptr)
+        {
+            entry->setText (juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92")) + "33.5", false);
+            entry->onReturnKey();
+            pump (50);
+        }
+        report ("typing -33.5 sets it and closes the field", std::abs (deg() + 33.5f) < 0.05f && ! dial->isTyping() && entryIn (sheet) == nullptr);
+
+        // The phase dial shows no number of its own: a double-click on its name resets it too.
+        set (40.f);
+        doubleClick (*dial, { 39.f, 80.f });
+        report ("double-click under a knob without a number resets it", std::abs (deg()) < 0.05f && ! dial->isTyping());
+
+        // A double-click arriving while the drag from its second click is still open.
+        {
+            GestureDepth gestures;
+            phase.addListener (&gestures);
+            set (40.f);
+            dial->mouseDown (mouseAt (*dial, { 39.f, 30.f }));
+            dial->mouseDoubleClick (mouseAt (*dial, { 39.f, 30.f }, 2));
+            dial->mouseUp (mouseAt (*dial, { 39.f, 30.f }, 2));
+            phase.removeListener (&gestures);
+            report ("a double-click mid-drag ends the drag before resetting", std::abs (deg()) < 0.05f && gestures.depth == 0 && gestures.deepest == 1);
+        }
+
+        // A knob that shows its number (as the phase dial, 78 x 86, but with its number on 71..86).
+        {
+            Dial shown (phase, "Phase", [] (float v) { return theme::signedNumber (v, 1) + juce::String (juce::CharPointer_UTF8 ("\xc2\xb0")); });
+            shown.setSize (78, 86);
+            set (40.f);
+            doubleClick (shown, { 39.f, 30.f });
+            report ("double-click on a knob with a number resets it", std::abs (deg()) < 0.05f && ! shown.isTyping());
+            set (40.f);
+            doubleClick (shown, { 6.f, 78.f });   // the value line, left of "+40.0°"
+            report ("double-click beside its number resets it", std::abs (deg()) < 0.05f && ! shown.isTyping());
+            set (40.f);
+            doubleClick (shown, { 39.f, 78.f });
+            report ("double-click on its number opens the field, value kept", shown.isTyping() && entryIn (shown) != nullptr && std::abs (deg() - 40.f) < 0.05f);
+        }
+        set (-33.5f);
+
+        doubleClick (sheet, { 290.f, 524.f });   // beside the number
+        report ("double-click beside the number does nothing", ! dial->isTyping() && std::abs (deg() + 33.5f) < 0.05f);
+
+        // Scope: 1/2 bar at the song's tempo, then zoomed in to 100 ms.
+        auto& scope = editor.getScope();
+        const auto t = proc.getTransport();
+        const float bar = (float) (0.5 * t.numerator * 4.0 / t.denominator * 60000.0 / t.bpm);
+        scope.setBars (0.5f);
+        const float full = scope.windowStart();
+        scope.setZoom (100.f);
+        const float s0 = scope.windowStart();
+        scroll (scope, { 400.f, 120.f }, -0.2f, 0.f);   // fingers to the left: on in time
+        report ("scrolling sideways moves the window on", scope.windowStart() > s0 + 1.f);
+        scroll (scope, { 400.f, 120.f }, 0.1f, 0.f);
+        report ("and back", scope.windowStart() < s0 + 100.f * 0.2f * 400.f / 798.f - 1.f);
+        for (int i = 0; i < 60; ++i) scroll (scope, { 400.f, 120.f }, -0.5f, 0.f);
+        report ("it stops at the end of the bar length", std::abs (scope.windowStart() + 100.f - (full + bar)) < 0.5f);
+        for (int i = 0; i < 60; ++i) scroll (scope, { 400.f, 120.f }, 0.5f, 0.f);
+        report ("and at its start", std::abs (scope.windowStart() - full) < 0.5f);
+        scroll (scope, { 400.f, 120.f }, -0.3f, 0.f);
+
+        const float f = (434.f - 34.f) / 798.f;   // the plot starts 34 px in, 798 px wide
+        const float before = scope.windowStart() + f * proc.scopeZoomMs;
+        scroll (scope, { 434.f, 120.f }, 0.f, 0.3f);
+        report ("scrolling up zooms in around the pointer", proc.scopeZoomMs < 99.f && std::abs (scope.windowStart() + f * proc.scopeZoomMs - before) < 0.05f);
+        const float z = proc.scopeZoomMs;
+        scope.mouseMagnify (mouseAt (scope, { 434.f, 120.f }), 2.f);
+        report ("a pinch zooms too, around the pointer", std::abs (proc.scopeZoomMs - 0.5f * z) < 0.05f
+                                                       && std::abs (scope.windowStart() + f * proc.scopeZoomMs - before) < 0.05f);
+        for (int i = 0; i < 40; ++i) scroll (scope, { 434.f, 120.f }, 0.f, -0.5f);
+        report ("zoomed out past the bar length, it sits at its start", proc.scopeZoomMs > bar && std::abs (scope.windowStart() + 0.04f * proc.scopeZoomMs) < 0.05f);
+
+        scope.setZoom (100.f);
+        scroll (scope, { 400.f, 120.f }, -0.3f, 0.f);
+        doubleClick (scope, { 400.f, 120.f });
+        report ("double-click: back to the bar length, from its start", juce::exactlyEqual (proc.scopeBars, 0.5f) && std::abs (scope.windowStart() - full) < 0.05f);
+        return ok;
+    }
 } // namespace
 
 int main (int argc, char** argv)
@@ -145,6 +302,7 @@ int main (int argc, char** argv)
     const auto lp = [&] (double hz, const testutil::Signal& x) { return testutil::Biquad::lowpass (hz, 0.7, fs).zeroPhase (x); };
     const auto src = testutil::sum (kick, bass);
 
+    bool failed = false;
     for (const auto& state : states)
     {
         hostClock = 0;
@@ -287,6 +445,26 @@ int main (int argc, char** argv)
             continue;
         }
 
+        if (state == "gestures")
+        {
+            failed = ! checkGestures (*editor, proc) || failed;
+            continue;
+        }
+        if (state == "typing")
+        {
+            proc.param (ids::phase).setValueNotifyingHost (proc.param (ids::phase).convertTo0to1 (-12.5f));
+            pump (20);
+            doubleClick (*editor->getChildComponent (0), { 130.f, 524.f });
+        }
+        if (state == "panned")
+        {
+            auto& scope = editor->getScope();
+            scope.setZoom (120.f);
+            scroll (scope, { 400.f, 120.f }, -0.6f, 0.f);
+            editor->tick();
+            pump (50);
+        }
+
         const float scale = std::getenv ("PFSNAP_SCALE") != nullptr ? juce::jlimit (1.f, 4.f, juce::String (std::getenv ("PFSNAP_SCALE")).getFloatValue()) : 2.f;
         const auto img = editor->createComponentSnapshot (editor->getLocalBounds(), true, scale);
         const auto file = outDir.getChildFile ("phasefucker_" + state + ".png");
@@ -303,5 +481,5 @@ int main (int argc, char** argv)
                          (int) st.result.hits.size(), st.result.hitAgreement, st.mappedHits, st.result.hitConfidence);
         std::printf ("\n");
     }
-    return 0;
+    return failed ? 1 : 0;
 }

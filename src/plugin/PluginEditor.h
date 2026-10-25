@@ -38,6 +38,7 @@ private:
     {
         explicit Sheet (PhaseFuckerEditor& e) : editor (e) { setOpaque (true); }
         void paint (juce::Graphics&) override;
+        void mouseDoubleClick (const juce::MouseEvent&) override;
         PhaseFuckerEditor& editor;
     };
 
@@ -46,6 +47,8 @@ private:
     void updateStatus();
 
     static juce::Rectangle<int> readoutArea() { return { 108, 500, 206, 84 }; }
+    static juce::Rectangle<float> readoutNumberArea() { return { 110.f, 506.f, 200.f, 36.f }; }   // the phase dial's number
+    juce::String readoutNumber();
     static juce::Rectangle<int> sectionCHeader() { return { 24, 480, 832, 20 }; }
     static juce::Rectangle<int> anchorArea() { return { 512, 498, 344, 90 }; }
     static juce::Rectangle<int> footerArea() { return { 24, 596, 832, 20 }; }
