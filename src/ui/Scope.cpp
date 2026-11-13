@@ -32,7 +32,7 @@ namespace
     }
 } // namespace
 
-Scope::Scope (PhaseFuckerProcessor& p)
+Scope::Scope (PhaseFixerProcessor& p)
     : proc (p), phaseAttachment (p.param (ids::phase), [] (float) {})
 {
     zoomMs = juce::jlimit (kMinZoom, kMaxZoom, p.scopeZoomMs);

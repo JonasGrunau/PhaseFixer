@@ -19,13 +19,13 @@
 // Nothing repaints on a timer unless what it shows changed: the controls are
 // opaque and repaint themselves, the sheet only redraws the readout, the
 // time-anchor block and the footer when their text changes.
-class PhaseFuckerEditor : public juce::AudioProcessorEditor, private juce::Timer
+class PhaseFixerEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
     static constexpr int kWidth = 880, kHeight = 620;
 
-    explicit PhaseFuckerEditor (PhaseFuckerProcessor&);
-    ~PhaseFuckerEditor() override;
+    explicit PhaseFixerEditor (PhaseFixerProcessor&);
+    ~PhaseFixerEditor() override;
 
     void resized() override;
     void paint (juce::Graphics&) override {}
@@ -36,10 +36,10 @@ public:
 private:
     struct Sheet : juce::Component
     {
-        explicit Sheet (PhaseFuckerEditor& e) : editor (e) { setOpaque (true); }
+        explicit Sheet (PhaseFixerEditor& e) : editor (e) { setOpaque (true); }
         void paint (juce::Graphics&) override;
         void mouseDoubleClick (const juce::MouseEvent&) override;
-        PhaseFuckerEditor& editor;
+        PhaseFixerEditor& editor;
     };
 
     void timerCallback() override { tick(); }
@@ -53,7 +53,7 @@ private:
     static juce::Rectangle<int> anchorArea() { return { 512, 498, 344, 90 }; }
     static juce::Rectangle<int> footerArea() { return { 24, 596, 832, 20 }; }
 
-    PhaseFuckerProcessor& proc;
+    PhaseFixerProcessor& proc;
     SheetLookAndFeel lnf;
     Sheet sheet { *this };
 

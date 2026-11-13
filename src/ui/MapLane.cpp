@@ -10,7 +10,7 @@ namespace
     juce::String degrees (double v, int decimals) { return signedNumber (v, decimals) + kDeg; }
 } // namespace
 
-MapLane::MapLane (PhaseFuckerProcessor& p) : proc (p) { setOpaque (true); }
+MapLane::MapLane (PhaseFixerProcessor& p) : proc (p) { setOpaque (true); }
 
 juce::Rectangle<float> MapLane::plotArea() const
 {

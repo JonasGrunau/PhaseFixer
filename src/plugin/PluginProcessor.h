@@ -25,12 +25,12 @@ namespace ids
 // Per hit (the `perhit` parameter), ALIGN instead learns a turn for every hit
 // of the reference into a PhaseMap on the host's timeline, played back with
 // the transport; the phase knob then adds an offset to the whole map.
-class PhaseFuckerProcessor : public juce::AudioProcessor,
+class PhaseFixerProcessor : public juce::AudioProcessor,
                              private juce::AsyncUpdater
 {
 public:
-    PhaseFuckerProcessor();
-    ~PhaseFuckerProcessor() override;
+    PhaseFixerProcessor();
+    ~PhaseFixerProcessor() override;
 
     // ---- AudioProcessor -------------------------------------------------------
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
@@ -126,7 +126,7 @@ public:
     static constexpr double kExportSeconds = 90.0;
     // Where exports go (kept, not temporary: a host may reference the file
     // where it lies). Set before use; the dev tools point it elsewhere.
-    juce::File exportDirectory = juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile ("PhaseFucker");
+    juce::File exportDirectory = juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile ("PhaseFixer");
 
     void updateTrackProperties (const TrackProperties& p) override;
 
@@ -182,9 +182,9 @@ private:
 
     struct Worker : juce::Thread
     {
-        explicit Worker (PhaseFuckerProcessor& p) : juce::Thread ("PhaseFucker align"), owner (p) {}
+        explicit Worker (PhaseFixerProcessor& p) : juce::Thread ("PhaseFixer align"), owner (p) {}
         void run() override;
-        PhaseFuckerProcessor& owner;
+        PhaseFixerProcessor& owner;
     };
 
     std::atomic<float>* phaseParam = nullptr;
@@ -245,5 +245,5 @@ private:
     juce::String exportWhere;               // guarded by stateLock
     double exportSeconds = 0.0;             // guarded by stateLock
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PhaseFuckerProcessor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PhaseFixerProcessor)
 };

@@ -1,4 +1,4 @@
-# PhaseFucker
+# PhaseFixer
 
 Automatic phase alignment for two tracks that recorded the same sound: kick
 in/out, snare top/bottom, close mics against overheads, DI against amp. Put it
@@ -14,11 +14,11 @@ it sums with the reference changes. The cost is a fixed latency of about
 VST3 and Audio Unit for macOS (universal), VST3 for Windows, plus a standalone
 app for trying it without a DAW. JUCE 8.
 
-![PhaseFucker after ALIGN: the track turned +65° and flipped, the low end summing 4.1 dB louder](docs/screenshot.png)
+![PhaseFixer after ALIGN: the track turned +65° and flipped, the low end summing 4.1 dB louder](docs/screenshot.png)
 
 ## Using it
 
-1. Insert PhaseFucker on the track to fix.
+1. Insert PhaseFixer on the track to fix.
 2. Route the reference track into the plugin's sidechain:
    - **Logic**: *Side Chain* menu at the top of the plugin window.
    - **Ableton Live**: open the device's *Sidechain* section and pick the track.
@@ -59,7 +59,7 @@ comes round again or playback stops (90 s at most). The pass is rendered
 offline through the same filter, so the file is exactly what you heard, minus
 the latency; a loop pass is rendered as a loop, its end running into its
 start. Then drag **DRAG WAV** into the arrangement at the bar the footer names.
-The 24-bit WAVs are kept in `~/Music/PhaseFucker`.
+The 24-bit WAVs are kept in `~/Music/PhaseFixer`.
 
 ### What you see
 
@@ -151,15 +151,15 @@ to use a local checkout.
 Analysis and DSP don't depend on JUCE and build in seconds:
 
 ```sh
-cmake -B build-core -G Ninja -DCMAKE_BUILD_TYPE=Release -DPHASEFUCKER_BUILD_PLUGIN=OFF
+cmake -B build-core -G Ninja -DCMAKE_BUILD_TYPE=Release -DPHASEFIXER_BUILD_PLUGIN=OFF
 cmake --build build-core
-./build-core/phasefucker_tests                      # rotation, Hilbert filter, detection, capture
-./build-core/phasefucker_align ref.wav track.wav    # the rotation the plugin would apply to two files
+./build-core/phasefixer_tests                      # rotation, Hilbert filter, detection, capture
+./build-core/phasefixer_align ref.wav track.wav    # the rotation the plugin would apply to two files
 ```
 
 ### UI snapshots
 
-`build/phasefucker_snapshot_artefacts/Release/phasefucker_snapshot <dir>`
+`build/phasefixer_snapshot_artefacts/Release/phasefixer_snapshot <dir>`
 renders the editor to PNGs (empty, idle, listening, aligned, offset, compare,
 no sidechain, the PER HIT hint, per hit, empty map, a 96-bar map, export) with
 the demo's scenarios (the `PF_DEMO_KIT` samples if set), no DAW needed;

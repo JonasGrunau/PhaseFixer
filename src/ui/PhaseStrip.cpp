@@ -8,7 +8,7 @@ namespace
     constexpr float kMinWeight = 0.02f;   // quieter bands aren't drawn
 }
 
-PhaseStrip::PhaseStrip (PhaseFuckerProcessor& p) : proc (p) { setOpaque (true); }
+PhaseStrip::PhaseStrip (PhaseFixerProcessor& p) : proc (p) { setOpaque (true); }
 
 juce::Rectangle<float> PhaseStrip::plotArea() const
 {

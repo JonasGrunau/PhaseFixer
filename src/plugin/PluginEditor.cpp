@@ -23,7 +23,7 @@ namespace
     }
 } // namespace
 
-PhaseFuckerEditor::PhaseFuckerEditor (PhaseFuckerProcessor& p)
+PhaseFixerEditor::PhaseFixerEditor (PhaseFixerProcessor& p)
     : AudioProcessorEditor (p), proc (p),
       modeSwitch (p.param (ids::perHit), { "One turn", "Per hit" }),
       phaseDial (p.param (ids::phase), "Phase", [] (float v) { return degrees (v); }),
@@ -57,19 +57,19 @@ PhaseFuckerEditor::PhaseFuckerEditor (PhaseFuckerProcessor& p)
     startTimerHz (30);
 }
 
-PhaseFuckerEditor::~PhaseFuckerEditor()
+PhaseFixerEditor::~PhaseFixerEditor()
 {
     stopTimer();
     setLookAndFeel (nullptr);
 }
 
-void PhaseFuckerEditor::resized()
+void PhaseFixerEditor::resized()
 {
     sheet.setBounds (0, 0, kWidth, kHeight);
     sheet.setTransform (juce::AffineTransform::scale ((float) getWidth() / kWidth));
 }
 
-void PhaseFuckerEditor::layout()
+void PhaseFixerEditor::layout()
 {
     refMeter.setBounds (392, 22, 130, 26);
     trackMeter.setBounds (540, 22, 130, 26);
@@ -88,13 +88,13 @@ void PhaseFuckerEditor::layout()
     compareKey.setBounds (420, 522, 54, 30);
 }
 
-juce::String PhaseFuckerEditor::readoutNumber()
+juce::String PhaseFixerEditor::readoutNumber()
 {
     // Per hit: the turn playing now (map plus offset).
     return degrees (perHitShown ? liveShown : proc.correction().phaseDeg);
 }
 
-void PhaseFuckerEditor::Sheet::mouseDoubleClick (const juce::MouseEvent& e)
+void PhaseFixerEditor::Sheet::mouseDoubleClick (const juce::MouseEvent& e)
 {
     // The phase dial shows its number here, so this is where it is typed
     // (per hit: the offset). A double-click on the dial itself resets it.
@@ -105,7 +105,7 @@ void PhaseFuckerEditor::Sheet::mouseDoubleClick (const juce::MouseEvent& e)
                                     juce::Justification::centredLeft);
 }
 
-void PhaseFuckerEditor::Sheet::paint (juce::Graphics& g)
+void PhaseFixerEditor::Sheet::paint (juce::Graphics& g)
 {
     auto& ed = editor;
     g.fillAll (col::sheet);
@@ -113,7 +113,7 @@ void PhaseFuckerEditor::Sheet::paint (juce::Graphics& g)
 
     // Wordmark.
     g.setFont (title (27.f));
-    const juce::String a ("PHASE"), slash ("/"), b ("FUCKER");
+    const juce::String a ("PHASE"), slash ("/"), b ("FIXER");
     float x = 24.f;
     for (auto [s, c] : { std::pair { a, col::ink }, { slash, col::accent }, { b, col::ink } })
     {
@@ -230,7 +230,7 @@ void PhaseFuckerEditor::Sheet::paint (juce::Graphics& g)
     g.drawText (ed.statusRight, foot, juce::Justification::centredRight, false);
 }
 
-void PhaseFuckerEditor::tick()
+void PhaseFixerEditor::tick()
 {
     ++ticks;
     const auto st = proc.getAlignState();
@@ -258,10 +258,10 @@ void PhaseFuckerEditor::tick()
     const bool fresh = st.hasResult && st.finishedAt != 0 && now - st.finishedAt < 1600;
     switch (st.stage)
     {
-        case PhaseFuckerProcessor::Stage::listening: alignKey.setLook (Look::listening, st.progress); break;
-        case PhaseFuckerProcessor::Stage::analysing: alignKey.setLook (Look::analysing, 1.f); break;
-        case PhaseFuckerProcessor::Stage::idle:
-        case PhaseFuckerProcessor::Stage::done:
+        case PhaseFixerProcessor::Stage::listening: alignKey.setLook (Look::listening, st.progress); break;
+        case PhaseFixerProcessor::Stage::analysing: alignKey.setLook (Look::analysing, 1.f); break;
+        case PhaseFixerProcessor::Stage::idle:
+        case PhaseFixerProcessor::Stage::done:
             alignKey.setLook (fresh ? (st.result.status == pf::AlignStatus::ok ? Look::aligned : Look::failed) : Look::idle, 0.f);
     }
 
@@ -306,23 +306,23 @@ void PhaseFuckerEditor::tick()
     updateStatus();
 }
 
-void PhaseFuckerEditor::updateStatus()
+void PhaseFixerEditor::updateStatus()
 {
     const auto st = proc.getAlignState();
     const auto c = proc.correction();
     juce::String s, right;
     bool warn = false;
 
-    using ES = PhaseFuckerProcessor::ExportStage;
+    using ES = PhaseFixerProcessor::ExportStage;
     const auto ex = proc.getExportInfo();
     const bool exportFresh = ex.stage == ES::ready && juce::Time::getMillisecondCounter() - exportKey.readySince() < 20000;
 
-    if (st.stage == PhaseFuckerProcessor::Stage::listening)
+    if (st.stage == PhaseFixerProcessor::Stage::listening)
     {
         s = juce::String (juce::CharPointer_UTF8 ("Listening \xe2\x80\x94 play a part where both tracks sound. Press again to use what\xe2\x80\x99s there."));
-        right = theme::fixed (st.progress * PhaseFuckerProcessor::kNeededSeconds, 1) + " / " + theme::fixed (PhaseFuckerProcessor::kNeededSeconds, 1) + " s";
+        right = theme::fixed (st.progress * PhaseFixerProcessor::kNeededSeconds, 1) + " / " + theme::fixed (PhaseFixerProcessor::kNeededSeconds, 1) + " s";
     }
-    else if (st.stage == PhaseFuckerProcessor::Stage::analysing)
+    else if (st.stage == PhaseFixerProcessor::Stage::analysing)
         s = juce::String (juce::CharPointer_UTF8 ("Analysing the last 10 seconds\xe2\x80\xa6"));
     else if (ex.stage == ES::armed)
         s = "Export: recording starts when playback starts or the loop comes round. Click again to cancel.";
@@ -340,7 +340,7 @@ void PhaseFuckerEditor::updateStatus()
     }
     else if (exportFresh)
     {
-        s = "Saved " + theme::fixed (ex.seconds, 2) + " s from " + ex.where + " to Music/PhaseFucker. Drag DRAG WAV into the arrangement at " + ex.where + ".";
+        s = "Saved " + theme::fixed (ex.seconds, 2) + " s from " + ex.where + " to Music/PhaseFixer. Drag DRAG WAV into the arrangement at " + ex.where + ".";
         right = ex.file.getFileName().length() > 26 ? juce::String() : ex.file.getFileName();
     }
     else if (! proc.hasSidechainBus())

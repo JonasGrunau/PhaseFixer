@@ -19,12 +19,12 @@ namespace
     }
 } // namespace
 
-PhaseFuckerProcessor::PhaseFuckerProcessor()
+PhaseFixerProcessor::PhaseFixerProcessor()
     : AudioProcessor (BusesProperties()
                           .withInput ("Input", juce::AudioChannelSet::stereo(), true)
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
                           .withInput ("Reference", juce::AudioChannelSet::stereo(), true)),
-      apvts (*this, nullptr, "PhaseFucker", createLayout())
+      apvts (*this, nullptr, "PhaseFixer", createLayout())
 {
     phaseParam = apvts.getRawParameterValue (ids::phase);
     invertParam = apvts.getRawParameterValue (ids::invert);
@@ -38,14 +38,14 @@ PhaseFuckerProcessor::PhaseFuckerProcessor()
     worker.startThread (juce::Thread::Priority::low);
 }
 
-PhaseFuckerProcessor::~PhaseFuckerProcessor()
+PhaseFixerProcessor::~PhaseFixerProcessor()
 {
     worker.signalThreadShouldExit();
     worker.notify();
     worker.stopThread (4000);
 }
 
-juce::AudioProcessorValueTreeState::ParameterLayout PhaseFuckerProcessor::createLayout()
+juce::AudioProcessorValueTreeState::ParameterLayout PhaseFixerProcessor::createLayout()
 {
     using namespace juce;
     AudioProcessorValueTreeState::ParameterLayout layout;
@@ -61,7 +61,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout PhaseFuckerProcessor::create
     return layout;
 }
 
-pf::Correction PhaseFuckerProcessor::correction() const noexcept
+pf::Correction PhaseFixerProcessor::correction() const noexcept
 {
     pf::Correction c;
     c.phaseDeg = phaseParam->load (std::memory_order_relaxed);
@@ -71,7 +71,7 @@ pf::Correction PhaseFuckerProcessor::correction() const noexcept
 
 // ---- Audio --------------------------------------------------------------------
 
-bool PhaseFuckerProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+bool PhaseFixerProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
     const auto in = layouts.getMainInputChannelSet(), out = layouts.getMainOutputChannelSet();
     if (in != out || (in != juce::AudioChannelSet::mono() && in != juce::AudioChannelSet::stereo()))
@@ -85,7 +85,7 @@ bool PhaseFuckerProcessor::isBusesLayoutSupported (const BusesLayout& layouts) c
     return true;
 }
 
-void PhaseFuckerProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+void PhaseFixerProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     const bool rateChanged = std::abs (sampleRate - capture.sampleRate()) > 0.5;
     currentRate.store (sampleRate, std::memory_order_relaxed);
@@ -99,7 +99,7 @@ void PhaseFuckerProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     setLatencySamples (rotator.latency());
 }
 
-void PhaseFuckerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+void PhaseFixerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
     const int n = buffer.getNumSamples();
@@ -150,7 +150,7 @@ void PhaseFuckerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         buffer.clear (c, 0, n);
 }
 
-double PhaseFuckerProcessor::turnFor (const Transport& t, int numSamples) noexcept
+double PhaseFixerProcessor::turnFor (const Transport& t, int numSamples) noexcept
 {
     const double knob = correction().totalDeg();
     if (! isPerHit())
@@ -183,7 +183,7 @@ double PhaseFuckerProcessor::turnFor (const Transport& t, int numSamples) noexce
     return pf::wrapDeg (mapTurn + knob);
 }
 
-PhaseFuckerProcessor::Transport PhaseFuckerProcessor::readTransport (juce::int64 index, int numSamples) noexcept
+PhaseFixerProcessor::Transport PhaseFixerProcessor::readTransport (juce::int64 index, int numSamples) noexcept
 {
     Transport t;
     if (auto* ph = getPlayHead())
@@ -245,7 +245,7 @@ PhaseFuckerProcessor::Transport PhaseFuckerProcessor::readTransport (juce::int64
 
 // ---- Align ----------------------------------------------------------------------
 
-void PhaseFuckerProcessor::align()
+void PhaseFixerProcessor::align()
 {
     {
         const juce::ScopedLock sl (stateLock);
@@ -264,13 +264,13 @@ void PhaseFuckerProcessor::align()
     worker.notify();
 }
 
-PhaseFuckerProcessor::AlignState PhaseFuckerProcessor::getAlignState() const
+PhaseFixerProcessor::AlignState PhaseFixerProcessor::getAlignState() const
 {
     const juce::ScopedLock sl (stateLock);
     return state;
 }
 
-void PhaseFuckerProcessor::Worker::run()
+void PhaseFixerProcessor::Worker::run()
 {
     while (! threadShouldExit())
     {
@@ -283,7 +283,7 @@ void PhaseFuckerProcessor::Worker::run()
     }
 }
 
-void PhaseFuckerProcessor::runAlignJob()
+void PhaseFixerProcessor::runAlignJob()
 {
     const bool perHit = isPerHit();
     // Listen until there is enough shared signal (or ALIGN is pressed again).
@@ -374,7 +374,7 @@ void PhaseFuckerProcessor::runAlignJob()
     triggerAsyncUpdate();
 }
 
-void PhaseFuckerProcessor::handleAsyncUpdate()
+void PhaseFixerProcessor::handleAsyncUpdate()
 {
     pf::AlignResult r;
     bool perHit = false;
@@ -398,7 +398,7 @@ void PhaseFuckerProcessor::handleAsyncUpdate()
     else applyResult (r);
 }
 
-void PhaseFuckerProcessor::learnMap()
+void PhaseFixerProcessor::learnMap()
 {
     std::vector<pf::PhaseMap::Hit> hits;
     double from, to, bpm;
@@ -426,25 +426,25 @@ void PhaseFuckerProcessor::learnMap()
     setParam (ids::invert, 0.f);
 }
 
-void PhaseFuckerProcessor::mapChanged()
+void PhaseFixerProcessor::mapChanged()
 {
     ++mapRevision;
     updateHostDisplay (ChangeDetails().withNonParameterStateChanged (true));
 }
 
-pf::PhaseMap PhaseFuckerProcessor::getMap() const
+pf::PhaseMap PhaseFixerProcessor::getMap() const
 {
     const juce::SpinLock::ScopedLockType l (mapLock);
     return map;
 }
 
-int PhaseFuckerProcessor::getMapSize() const
+int PhaseFixerProcessor::getMapSize() const
 {
     const juce::SpinLock::ScopedLockType l (mapLock);
     return map.size();
 }
 
-void PhaseFuckerProcessor::editMapPoint (double ppq, double deg)
+void PhaseFixerProcessor::editMapPoint (double ppq, double deg)
 {
     {
         const juce::SpinLock::ScopedLockType l (mapLock);
@@ -455,7 +455,7 @@ void PhaseFuckerProcessor::editMapPoint (double ppq, double deg)
     mapChanged();
 }
 
-void PhaseFuckerProcessor::clearMap()
+void PhaseFixerProcessor::clearMap()
 {
     {
         const juce::SpinLock::ScopedLockType l (mapLock);
@@ -464,7 +464,7 @@ void PhaseFuckerProcessor::clearMap()
     mapChanged();
 }
 
-void PhaseFuckerProcessor::setParam (const char* id, float plainValue)
+void PhaseFixerProcessor::setParam (const char* id, float plainValue)
 {
     auto& p = param (id);
     p.beginChangeGesture();
@@ -472,7 +472,7 @@ void PhaseFuckerProcessor::setParam (const char* id, float plainValue)
     p.endChangeGesture();
 }
 
-void PhaseFuckerProcessor::applyResult (const pf::AlignResult& r)
+void PhaseFixerProcessor::applyResult (const pf::AlignResult& r)
 {
     setParam (ids::compare, 0.f);
     setParam (ids::phase, (float) r.correction.phaseDeg);
@@ -481,7 +481,7 @@ void PhaseFuckerProcessor::applyResult (const pf::AlignResult& r)
 
 // ---- Export ------------------------------------------------------------------------
 
-void PhaseFuckerProcessor::toggleExport()
+void PhaseFixerProcessor::toggleExport()
 {
     auto stage = exportStage.load (std::memory_order_acquire);
     if (stage == (int) ExportStage::armed && exportStage.compare_exchange_strong (stage, (int) ExportStage::idle))
@@ -504,7 +504,7 @@ void PhaseFuckerProcessor::toggleExport()
     exportStage.store ((int) ExportStage::armed, std::memory_order_release);
 }
 
-void PhaseFuckerProcessor::recordForExport (const juce::AudioBuffer<float>& in, const Transport& t, double turn) noexcept
+void PhaseFixerProcessor::recordForExport (const juce::AudioBuffer<float>& in, const Transport& t, double turn) noexcept
 {
     auto stage = exportStage.load (std::memory_order_acquire);
     int from = 0;   // where in this block the pass starts
@@ -574,7 +574,7 @@ void PhaseFuckerProcessor::recordForExport (const juce::AudioBuffer<float>& in, 
         exportStage.store ((int) ExportStage::rendering, std::memory_order_release);
 }
 
-void PhaseFuckerProcessor::renderExport()
+void PhaseFixerProcessor::renderExport()
 {
     const double fs = getRate();
     int n = recLength.load (std::memory_order_acquire);
@@ -596,7 +596,7 @@ void PhaseFuckerProcessor::renderExport()
         }
         const auto dir = exportDirectory;
         dir.createDirectory();
-        const auto title = (name.isEmpty() ? juce::String ("PhaseFucker") : name) + " - " + where + " - "
+        const auto title = (name.isEmpty() ? juce::String ("PhaseFixer") : name) + " - " + where + " - "
                          + theme::fixed (recBpm, juce::exactlyEqual (recBpm, std::round (recBpm)) ? 0 : 2) + " BPM";
         file = dir.getNonexistentChildFile (juce::File::createLegalFileName (title), ".wav", false);
 
@@ -626,7 +626,7 @@ void PhaseFuckerProcessor::renderExport()
     exportStage.store ((int) (file == juce::File() ? ExportStage::failed : ExportStage::ready), std::memory_order_release);
 }
 
-PhaseFuckerProcessor::ExportInfo PhaseFuckerProcessor::getExportInfo() const
+PhaseFixerProcessor::ExportInfo PhaseFixerProcessor::getExportInfo() const
 {
     ExportInfo e;
     e.stage = (ExportStage) exportStage.load (std::memory_order_acquire);
@@ -645,13 +645,13 @@ PhaseFuckerProcessor::ExportInfo PhaseFuckerProcessor::getExportInfo() const
     return e;
 }
 
-void PhaseFuckerProcessor::updateTrackProperties (const TrackProperties& p)
+void PhaseFixerProcessor::updateTrackProperties (const TrackProperties& p)
 {
     const juce::ScopedLock sl (stateLock);
     trackName = p.name.value_or (juce::String());
 }
 
-void PhaseFuckerProcessor::resetCorrection()
+void PhaseFixerProcessor::resetCorrection()
 {
     setParam (ids::phase, 0.f);
     setParam (ids::invert, 0.f);
@@ -660,7 +660,7 @@ void PhaseFuckerProcessor::resetCorrection()
 
 // ---- State -------------------------------------------------------------------------
 
-void PhaseFuckerProcessor::getStateInformation (juce::MemoryBlock& destData)
+void PhaseFixerProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto tree = apvts.copyState();
     tree.setProperty ("scopeTrigger", (int) scopeTrigger, nullptr);
@@ -708,7 +708,7 @@ void PhaseFuckerProcessor::getStateInformation (juce::MemoryBlock& destData)
         copyXmlToBinary (*xml, destData);
 }
 
-void PhaseFuckerProcessor::setStateInformation (const void* data, int sizeInBytes)
+void PhaseFixerProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     const auto xml = getXmlFromBinary (data, sizeInBytes);
     if (xml == nullptr || ! xml->hasTagName (apvts.state.getType())) return;
@@ -763,6 +763,6 @@ void PhaseFuckerProcessor::setStateInformation (const void* data, int sizeInByte
     }
 }
 
-juce::AudioProcessorEditor* PhaseFuckerProcessor::createEditor() { return new PhaseFuckerEditor (*this); }
+juce::AudioProcessorEditor* PhaseFixerProcessor::createEditor() { return new PhaseFixerEditor (*this); }
 
-juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new PhaseFuckerProcessor(); }
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new PhaseFixerProcessor(); }

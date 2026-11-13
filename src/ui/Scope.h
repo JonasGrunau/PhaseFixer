@@ -34,7 +34,7 @@
 class Scope : public juce::Component
 {
 public:
-    explicit Scope (PhaseFuckerProcessor&);
+    explicit Scope (PhaseFixerProcessor&);
 
     void refresh();                                   // editor timer
     void showHit (juce::int64 sample, int holdMs);    // jump to the hit an analysis used (HIT trigger)
@@ -57,7 +57,7 @@ public:
     void mouseExit (const juce::MouseEvent&) override { repaint(); }
 
 private:
-    using Trigger = PhaseFuckerProcessor::Trigger;
+    using Trigger = PhaseFixerProcessor::Trigger;
 
     void draw (juce::Graphics&);
     juce::Rectangle<float> plotArea() const;
@@ -75,7 +75,7 @@ private:
     double ppqAt (double index) const;      // timeline position of a grabbed sample, NaN if unknown
     double indexOf (double ppq) const;      // the reverse, -1 if not in the grab
 
-    PhaseFuckerProcessor& proc;
+    PhaseFixerProcessor& proc;
     juce::ParameterAttachment phaseAttachment;
 
     std::vector<float> ref, raw, hil, fixed;

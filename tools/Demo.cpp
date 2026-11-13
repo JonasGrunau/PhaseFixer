@@ -1,7 +1,7 @@
-// PhaseFucker without a DAW: plays a reference and a second "mic" of the same
+// PhaseFixer without a DAW: plays a reference and a second "mic" of the same
 // sound through the plugin (reference on the sidechain, as in a session) and
 // out of the speakers, with the plugin's editor below a small transport bar.
-//   phasefucker_demo [reference.wav track.wav]
+//   phasefixer_demo [reference.wav track.wav]
 //
 // SUM plays reference + corrected track with the reference delayed by the
 // plugin's latency, the way a DAW compensates it; that is where alignment is
@@ -114,7 +114,7 @@ class DemoAudio : public juce::AudioIODeviceCallback
 public:
     enum Monitor { sum, track, reference };
 
-    explicit DemoAudio (PhaseFuckerProcessor& p) : proc (p) { proc.setPlayHead (&playHead); }
+    explicit DemoAudio (PhaseFixerProcessor& p) : proc (p) { proc.setPlayHead (&playHead); }
 
     std::function<void (double)> onRate;   // message thread: the device runs at a new rate
     std::atomic<int> monitor { sum };
@@ -220,7 +220,7 @@ public:
     }
 
 private:
-    PhaseFuckerProcessor& proc;
+    PhaseFixerProcessor& proc;
     TempoPlayHead playHead;
     juce::SpinLock lock;
     std::shared_ptr<Material> material;
@@ -283,7 +283,7 @@ public:
         if (files[0].existsAsFile() && files[1].existsAsFile()) current = 100;
         setLookAndFeel (&lnf);
         setOpaque (true);
-        editor.reset (dynamic_cast<PhaseFuckerEditor*> (proc.createEditor()));
+        editor.reset (dynamic_cast<PhaseFixerEditor*> (proc.createEditor()));
         addAndMakeVisible (*editor);
 
         // Space plays and stops from anywhere, so the controls don't take the focus.
@@ -320,7 +320,7 @@ public:
         devices.addAudioCallback (&audio);
 
         setWantsKeyboardFocus (true);
-        setSize (PhaseFuckerEditor::kWidth, PhaseFuckerEditor::kHeight + kBar);
+        setSize (PhaseFixerEditor::kWidth, PhaseFixerEditor::kHeight + kBar);
     }
 
     ~DemoComponent() override
@@ -348,7 +348,7 @@ public:
         source.setBounds (98, 20, 250, 24);
         for (int i = 0; i < 3; ++i)
             monitor[(size_t) i].setBounds (362 + i * 74, 20, i == 2 ? 86 : 70, 24);
-        editor->setBounds (0, kBar, PhaseFuckerEditor::kWidth, PhaseFuckerEditor::kHeight);
+        editor->setBounds (0, kBar, PhaseFixerEditor::kWidth, PhaseFixerEditor::kHeight);
     }
 
     bool keyPressed (const juce::KeyPress& k) override
@@ -395,7 +395,7 @@ private:
         chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& a) {
             const auto ref = a.getResult();
             if (! ref.existsAsFile()) { source.setSelectedId (current, juce::dontSendNotification); return; }
-            chooser = std::make_unique<juce::FileChooser> ("Track (the one PhaseFucker corrects)", ref.getParentDirectory(), "*.wav;*.aif;*.aiff;*.flac");
+            chooser = std::make_unique<juce::FileChooser> ("Track (the one PhaseFixer corrects)", ref.getParentDirectory(), "*.wav;*.aif;*.aiff;*.flac");
             chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this, ref] (const juce::FileChooser& b) {
                 const auto trk = b.getResult();
                 if (trk.existsAsFile()) { files = { ref, trk }; current = 100; }
@@ -404,11 +404,11 @@ private:
         });
     }
 
-    PhaseFuckerProcessor proc;
+    PhaseFixerProcessor proc;
     DemoAudio audio;
     juce::AudioDeviceManager devices;
     BarLookAndFeel lnf;
-    std::unique_ptr<PhaseFuckerEditor> editor;
+    std::unique_ptr<PhaseFixerEditor> editor;
     juce::TextButton play;
     juce::ComboBox source;
     std::array<juce::TextButton, 3> monitor;
@@ -421,7 +421,7 @@ private:
 class DemoApp : public juce::JUCEApplication
 {
 public:
-    const juce::String getApplicationName() override { return "PhaseFucker Demo"; }
+    const juce::String getApplicationName() override { return "PhaseFixer Demo"; }
     const juce::String getApplicationVersion() override { return JucePlugin_VersionString; }
 
     void initialise (const juce::String& args) override
@@ -437,7 +437,7 @@ private:
     struct Window : juce::DocumentWindow
     {
         explicit Window (std::unique_ptr<DemoComponent> content)
-            : DocumentWindow ("PhaseFucker Demo", col::sheet, DocumentWindow::closeButton | DocumentWindow::minimiseButton)
+            : DocumentWindow ("PhaseFixer Demo", col::sheet, DocumentWindow::closeButton | DocumentWindow::minimiseButton)
         {
             setUsingNativeTitleBar (true);
             setContentOwned (content.release(), true);

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds the macOS installer from a finished plugin build.
 # Usage: packaging/macos/build-pkg.sh <artefacts-dir> <version> <out.pkg>
-#   e.g. packaging/macos/build-pkg.sh build/PhaseFucker_artefacts/Release 1.2.0 dist/PhaseFucker-1.2.0-macOS.pkg
+#   e.g. packaging/macos/build-pkg.sh build/PhaseFixer_artefacts/Release 1.2.0 dist/PhaseFixer-1.2.0-macOS.pkg
 #
 # One component package per format (VST3, AU), wrapped in a product archive
 # whose "Customize" page lets the user untick either. The bundles go in as
@@ -14,7 +14,7 @@ ARTEFACTS=$1
 VERSION=$2
 OUT=$3
 
-ID=de.grunau.phasefucker
+ID=de.grunau.phasefixer
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -40,13 +40,13 @@ component()
 }
 
 mkdir -p "$WORK/pkgs"
-component vst3 "$ARTEFACTS/VST3/PhaseFucker.vst3"      /Library/Audio/Plug-Ins/VST3
-component au   "$ARTEFACTS/AU/PhaseFucker.component"   /Library/Audio/Plug-Ins/Components
+component vst3 "$ARTEFACTS/VST3/PhaseFixer.vst3"      /Library/Audio/Plug-Ins/VST3
+component au   "$ARTEFACTS/AU/PhaseFixer.component"   /Library/Audio/Plug-Ins/Components
 
 cat > "$WORK/distribution.xml" <<EOF
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
-    <title>PhaseFucker $VERSION</title>
+    <title>PhaseFixer $VERSION</title>
     <options customize="allow" require-scripts="false" hostArchitectures="arm64,x86_64"/>
     <domains enable_localSystem="true"/>
     <allowed-os-versions><os-version min="11.0"/></allowed-os-versions>
@@ -54,10 +54,10 @@ cat > "$WORK/distribution.xml" <<EOF
         <line choice="vst3"/>
         <line choice="au"/>
     </choices-outline>
-    <choice id="vst3" title="VST3 plug-in" description="/Library/Audio/Plug-Ins/VST3/PhaseFucker.vst3">
+    <choice id="vst3" title="VST3 plug-in" description="/Library/Audio/Plug-Ins/VST3/PhaseFixer.vst3">
         <pkg-ref id="$ID.vst3"/>
     </choice>
-    <choice id="au" title="Audio Unit" description="/Library/Audio/Plug-Ins/Components/PhaseFucker.component">
+    <choice id="au" title="Audio Unit" description="/Library/Audio/Plug-Ins/Components/PhaseFixer.component">
         <pkg-ref id="$ID.au"/>
     </choice>
     <pkg-ref id="$ID.vst3" version="$VERSION">vst3.pkg</pkg-ref>

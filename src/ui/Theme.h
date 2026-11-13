@@ -5,7 +5,7 @@
 // The house style of the plugin family (the audio-plugin SDK): a printed
 // drawing sheet, warm neutrals, ink and hairlines, one accent colour that
 // means one thing. No gradients, no shadows, no glow; hairlines and type do
-// the work. PhaseFucker runs on the dark "night" sheet.
+// the work. PhaseFixer runs on the dark "night" sheet.
 namespace theme
 {
     // Every colour in the UI comes from these roles. Components never write a
@@ -31,7 +31,7 @@ namespace theme
         juce::uint32 accentWash;   // accent at low alpha: areas (what cancels)
     };
 
-    // Light "paper" variant: the lab paper PhaseFucker shipped with up to v0.3.
+    // Light "paper" variant: the lab paper PhaseFixer shipped with up to v0.3.
     inline constexpr Palette paper {
         0xffeeeae0,   // sheet     paper           OKLCH L .94 C .014 H 89
         0xffeeeae0,   // well      plots sit on the paper itself

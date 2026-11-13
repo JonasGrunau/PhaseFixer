@@ -15,7 +15,7 @@
 class MapLane : public juce::Component
 {
 public:
-    explicit MapLane (PhaseFuckerProcessor&);
+    explicit MapLane (PhaseFixerProcessor&);
 
     void refresh();   // editor timer
 
@@ -36,7 +36,7 @@ private:
     int pointAt (juce::Point<float>) const;
     void fitRange();
 
-    PhaseFuckerProcessor& proc;
+    PhaseFixerProcessor& proc;
     pf::PhaseMap map;
     int seenRevision = -1, liveIndex = -1, hover = -1, dragIndex = -1;
     double fromPpq = 0.0, toPpq = 4.0, barLength = 4.0, beatLength = 1.0, bpm = 120.0;

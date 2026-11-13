@@ -12,7 +12,7 @@
 class PhaseStrip : public juce::Component
 {
 public:
-    explicit PhaseStrip (PhaseFuckerProcessor&);
+    explicit PhaseStrip (PhaseFixerProcessor&);
 
     void refresh();   // editor timer
 
@@ -25,7 +25,7 @@ private:
     juce::Rectangle<float> plotArea() const;
     float xOf (float hz) const;
 
-    PhaseFuckerProcessor& proc;
+    PhaseFixerProcessor& proc;
     pf::LiveSpectrum live;
     std::vector<pf::CrossSpectrum::Band> before, after;
     float lowGainDb = 0.f;

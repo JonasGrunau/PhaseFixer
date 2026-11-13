@@ -1,5 +1,5 @@
 // Renders the editor offscreen to PNGs, so the UI can be reviewed without a DAW.
-//   phasefucker_snapshot <out-dir> [state ...]
+//   phasefixer_snapshot <out-dir> [state ...]
 // The material is the demo host's kick and rolling bass (the PF_DEMO_KIT
 // samples if set, else PsyLoop.h), in the demo's scenarios.
 // States (default: all but bench and roundtrip):
@@ -46,7 +46,7 @@ namespace
     const bool splitAtLoop = [] { const auto* s = std::getenv ("PFSNAP_SPLIT"); return s == nullptr || juce::String (s).getIntValue() != 0; }();
     juce::int64 hostClock = 0;
 
-    void feed (PhaseFuckerProcessor& p, const testutil::Signal& ref, const testutil::Signal& trk, size_t from, size_t to)
+    void feed (PhaseFixerProcessor& p, const testutil::Signal& ref, const testutil::Signal& trk, size_t from, size_t to)
     {
         p.setPlayHead (&playHead);
         playHead.sampleRate = p.getRate();
@@ -87,7 +87,7 @@ namespace
     }
 
     // One block with the transport stopped, as hosts keep processing.
-    void stop (PhaseFuckerProcessor& p)
+    void stop (PhaseFixerProcessor& p)
     {
         playHead.playing = false;
         juce::AudioBuffer<float> buf (4, 512);
@@ -99,12 +99,12 @@ namespace
 
     void pump (int ms) { juce::MessageManager::getInstance()->runDispatchLoopUntil (ms); }
 
-    void waitForResult (PhaseFuckerProcessor& p)
+    void waitForResult (PhaseFixerProcessor& p)
     {
         for (int i = 0; i < 200; ++i)
         {
             pump (25);
-            if (p.getAlignState().stage == PhaseFuckerProcessor::Stage::done) return;
+            if (p.getAlignState().stage == PhaseFixerProcessor::Stage::done) return;
         }
         std::printf ("timed out waiting for the analysis\n");
     }
@@ -180,7 +180,7 @@ namespace
     }
 
     // The knob and scope gestures, through their real handlers.
-    bool checkGestures (PhaseFuckerEditor& editor, PhaseFuckerProcessor& proc)
+    bool checkGestures (PhaseFixerEditor& editor, PhaseFixerProcessor& proc)
     {
         auto& sheet = *editor.getChildComponent (0);
         auto* dial = dynamic_cast<Dial*> (sheet.getComponentAt (63, 530));
@@ -306,7 +306,7 @@ int main (int argc, char** argv)
     for (const auto& state : states)
     {
         hostClock = 0;
-        PhaseFuckerProcessor proc;
+        PhaseFixerProcessor proc;
         if (state == "nosc")
         {
             auto layout = proc.getBusesLayout();
@@ -370,7 +370,7 @@ int main (int argc, char** argv)
             proc.toggleExport();
             feed (proc, ref, trk, 0, src.size());   // the loop comes round: one pass
             feed (proc, ref, trk, 0, splitAtLoop ? 512 : src.size());   // and round again: done (run-through blocks: one more pass)
-            for (int i = 0; i < 100 && proc.getExportInfo().stage != PhaseFuckerProcessor::ExportStage::ready; ++i)
+            for (int i = 0; i < 100 && proc.getExportInfo().stage != PhaseFixerProcessor::ExportStage::ready; ++i)
                 pump (30);
             const auto e = proc.getExportInfo();
             std::printf ("export: stage %d, %.3f s from %s -> %s\n", (int) e.stage, e.seconds, e.where.toRawUTF8(), e.file.getFullPathName().toRawUTF8());
@@ -402,7 +402,7 @@ int main (int argc, char** argv)
             if (proc.getMapSize() > 2) proc.editMapPoint (proc.getMap().points[2].ppq, 123.0);
             juce::MemoryBlock data;
             proc.getStateInformation (data);
-            PhaseFuckerProcessor copy;
+            PhaseFixerProcessor copy;
             copy.setStateInformation (data.getData(), (int) data.getSize());
             const auto a = proc.getMap(), b = copy.getMap();
             bool same = a.size() == b.size() && a.size() > 0 && copy.isPerHit();
@@ -418,12 +418,12 @@ int main (int argc, char** argv)
         // PFSNAP_SPLIT=0 (above): blocks run through the loop's end.
         // PFSNAP_TRIGGER=0/1/2 (hit/beat/bar), PFSNAP_BARS=bars or PFSNAP_ZOOM=ms: scope settings for the shot.
         // PFSNAP_PHASE=degrees: the phase knob. PFSNAP_SCALE=1: render at 1x (default 2x, a Retina window).
-        if (auto* t = std::getenv ("PFSNAP_TRIGGER")) proc.scopeTrigger = (PhaseFuckerProcessor::Trigger) juce::jlimit (0, 2, juce::String (t).getIntValue());
+        if (auto* t = std::getenv ("PFSNAP_TRIGGER")) proc.scopeTrigger = (PhaseFixerProcessor::Trigger) juce::jlimit (0, 2, juce::String (t).getIntValue());
         if (auto* z = std::getenv ("PFSNAP_ZOOM")) { proc.scopeZoomMs = juce::String (z).getFloatValue(); proc.scopeBars = 0.f; }
         if (auto* b = std::getenv ("PFSNAP_BARS")) proc.scopeBars = juce::String (b).getFloatValue();
         if (auto* ph = std::getenv ("PFSNAP_PHASE"))   // the phase knob (per hit: the offset), degrees
             proc.param (ids::phase).setValueNotifyingHost (proc.param (ids::phase).convertTo0to1 (juce::String (ph).getFloatValue()));
-        std::unique_ptr<PhaseFuckerEditor> editor (dynamic_cast<PhaseFuckerEditor*> (proc.createEditor()));
+        std::unique_ptr<PhaseFixerEditor> editor (dynamic_cast<PhaseFixerEditor*> (proc.createEditor()));
         pump (100);
         for (int i = 0; i < 4; ++i) editor->tick();
         pump (50);
@@ -467,7 +467,7 @@ int main (int argc, char** argv)
 
         const float scale = std::getenv ("PFSNAP_SCALE") != nullptr ? juce::jlimit (1.f, 4.f, juce::String (std::getenv ("PFSNAP_SCALE")).getFloatValue()) : 2.f;
         const auto img = editor->createComponentSnapshot (editor->getLocalBounds(), true, scale);
-        const auto file = outDir.getChildFile ("phasefucker_" + state + ".png");
+        const auto file = outDir.getChildFile ("phasefixer_" + state + ".png");
         file.deleteFile();
         juce::FileOutputStream os (file);
         juce::PNGImageFormat().writeImageToStream (img, os);

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds and opens the demo host: PhaseFucker in a window with audio playing
+# Builds and opens the demo host: PhaseFixer in a window with audio playing
 # through it, the reference on its sidechain, out of your speakers. No DAW.
 #   ./start.sh                        built-in kick + rolling bass scenarios (pick one in the window)
 #   ./start.sh ref.wav track.wav      your files: the reference, then the track to fix
@@ -24,6 +24,6 @@ fi
 if [[ ! -f build/build.ninja ]]; then
     cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ${PF_CMAKE_ARGS:-}
 fi
-cmake --build build --target phasefucker_demo
+cmake --build build --target phasefixer_demo
 
-exec "build/phasefucker_demo_artefacts/Release/PhaseFucker Demo.app/Contents/MacOS/PhaseFucker Demo" ${files[@]+"${files[@]}"}
+exec "build/phasefixer_demo_artefacts/Release/PhaseFixer Demo.app/Contents/MacOS/PhaseFixer Demo" ${files[@]+"${files[@]}"}

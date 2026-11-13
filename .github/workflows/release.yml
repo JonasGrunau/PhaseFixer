@@ -37,8 +37,8 @@ jobs:
     runs-on: macos-latest
     env:
       VERSION: ${{ needs.version.outputs.version }}
-      OUT: build/PhaseFucker_artefacts/Release
-      BUNDLES: VST3/PhaseFucker.vst3 AU/PhaseFucker.component
+      OUT: build/PhaseFixer_artefacts/Release
+      BUNDLES: VST3/PhaseFixer.vst3 AU/PhaseFixer.component
       # Signing and notarization run when the certificate secret is set (README > Releases).
       SIGN: ${{ secrets.MACOS_CERTIFICATES_P12 != '' }}
     steps:
@@ -48,21 +48,21 @@ jobs:
         run: >
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
-          -DPHASEFUCKER_VERSION=${{ needs.version.outputs.numeric }}
-          -DPHASEFUCKER_BUILD_TESTS=ON -DPHASEFUCKER_COPY_PLUGIN=OFF
+          -DPHASEFIXER_VERSION=${{ needs.version.outputs.numeric }}
+          -DPHASEFIXER_BUILD_TESTS=ON -DPHASEFIXER_COPY_PLUGIN=OFF
 
       - name: Build
-        run: cmake --build build --parallel --target PhaseFucker_VST3 PhaseFucker_AU phasefucker_tests
+        run: cmake --build build --parallel --target PhaseFixer_VST3 PhaseFixer_AU phasefixer_tests
 
       - name: Test
-        run: ./build/phasefucker_tests
+        run: ./build/phasefixer_tests
 
       - name: Validate (pluginval)
         run: |
           curl -fsSL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
           ditto -x -k pluginval.zip pluginval
           pluginval/pluginval.app/Contents/MacOS/pluginval --strictness-level 5 --validate-in-process --skip-gui-tests \
-            --validate "$OUT/VST3/PhaseFucker.vst3"
+            --validate "$OUT/VST3/PhaseFixer.vst3"
 
       - name: Import Developer ID certificates
         if: env.SIGN == 'true'
@@ -100,7 +100,7 @@ jobs:
       - name: Package
         run: |
           [[ "$SIGN" == true ]] || echo "::warning::MACOS_CERTIFICATES_P12 is not set, so the macOS build is not signed"
-          packaging/macos/build-pkg.sh "$OUT" "$VERSION" "dist/PhaseFucker-$VERSION-macOS.pkg"
+          packaging/macos/build-pkg.sh "$OUT" "$VERSION" "dist/PhaseFixer-$VERSION-macOS.pkg"
 
       - name: Notarize
         if: env.SIGN == 'true'
@@ -108,7 +108,7 @@ jobs:
           NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
           NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
         run: |
-          pkg="dist/PhaseFucker-$VERSION-macOS.pkg"
+          pkg="dist/PhaseFixer-$VERSION-macOS.pkg"
           auth=(--apple-id "$NOTARY_APPLE_ID" --password "$NOTARY_PASSWORD" --team-id "$TEAM_ID")
           result=$(xcrun notarytool submit "$pkg" "${auth[@]}" --wait --timeout 1h --output-format json)
           echo "$result"
@@ -124,9 +124,9 @@ jobs:
       - name: Zip plug-ins
         run: |
           mkdir plugins
-          ditto "$OUT/VST3/PhaseFucker.vst3" plugins/PhaseFucker.vst3
-          ditto "$OUT/AU/PhaseFucker.component" plugins/PhaseFucker.component
-          ditto -c -k plugins "dist/PhaseFucker-$VERSION-macOS-VST3-AU.zip"
+          ditto "$OUT/VST3/PhaseFixer.vst3" plugins/PhaseFixer.vst3
+          ditto "$OUT/AU/PhaseFixer.component" plugins/PhaseFixer.component
+          ditto -c -k plugins "dist/PhaseFixer-$VERSION-macOS-VST3-AU.zip"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -142,28 +142,28 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Quoted: PowerShell splits an unquoted -DPHASEFUCKER_VERSION=1.2.0 at the first dot.
+      # Quoted: PowerShell splits an unquoted -DPHASEFIXER_VERSION=1.2.0 at the first dot.
       - name: Configure
         run: >
           cmake -B build -A x64
-          "-DPHASEFUCKER_VERSION=${{ needs.version.outputs.numeric }}"
-          -DPHASEFUCKER_BUILD_TESTS=ON -DPHASEFUCKER_COPY_PLUGIN=OFF
+          "-DPHASEFIXER_VERSION=${{ needs.version.outputs.numeric }}"
+          -DPHASEFIXER_BUILD_TESTS=ON -DPHASEFIXER_COPY_PLUGIN=OFF
 
       - name: Build
-        run: cmake --build build --config Release --parallel --target PhaseFucker_VST3 phasefucker_tests
+        run: cmake --build build --config Release --parallel --target PhaseFixer_VST3 phasefixer_tests
 
       - name: Test
-        run: build\Release\phasefucker_tests.exe
+        run: build\Release\phasefixer_tests.exe
 
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
 
       - name: Package
         run: |
-          $out = "$PWD\build\PhaseFucker_artefacts\Release"
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$env:VERSION" "/DArtefacts=$out" "/O$PWD\dist" packaging\windows\PhaseFucker.iss
+          $out = "$PWD\build\PhaseFixer_artefacts\Release"
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$env:VERSION" "/DArtefacts=$out" "/O$PWD\dist" packaging\windows\PhaseFixer.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Compress-Archive -Path "$out\VST3\PhaseFucker.vst3" -DestinationPath "dist\PhaseFucker-$env:VERSION-Windows-VST3.zip"
+          Compress-Archive -Path "$out\VST3\PhaseFixer.vst3" -DestinationPath "dist\PhaseFixer-$env:VERSION-Windows-VST3.zip"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -189,4 +189,4 @@ jobs:
           flags=()
           [[ "$VERSION" == *-* ]] && flags+=(--prerelease)
           gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
-            --verify-tag --title "PhaseFucker $VERSION" --generate-notes "${flags[@]}"
+            --verify-tag --title "PhaseFixer $VERSION" --generate-notes "${flags[@]}"

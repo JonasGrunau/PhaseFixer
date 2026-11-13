@@ -4,9 +4,9 @@ using namespace theme;
 
 namespace
 {
-    using Stage = PhaseFuckerProcessor::ExportStage;
+    using Stage = PhaseFixerProcessor::ExportStage;
 
-    juce::String textFor (const PhaseFuckerProcessor::ExportInfo& e)
+    juce::String textFor (const PhaseFixerProcessor::ExportInfo& e)
     {
         switch (e.stage)
         {
@@ -21,7 +21,7 @@ namespace
     }
 } // namespace
 
-ExportKey::ExportKey (PhaseFuckerProcessor& p) : proc (p)
+ExportKey::ExportKey (PhaseFixerProcessor& p) : proc (p)
 {
     setOpaque (true);
     setMouseCursor (juce::MouseCursor::PointingHandCursor);

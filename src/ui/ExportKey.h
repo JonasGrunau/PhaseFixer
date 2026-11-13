@@ -10,7 +10,7 @@
 class ExportKey : public juce::Component
 {
 public:
-    explicit ExportKey (PhaseFuckerProcessor&);
+    explicit ExportKey (PhaseFixerProcessor&);
 
     void refresh();   // editor timer
     juce::uint32 readySince() const noexcept { return readyAt; }
@@ -23,8 +23,8 @@ public:
     void mouseExit (const juce::MouseEvent&) override { repaint(); }
 
 private:
-    PhaseFuckerProcessor& proc;
-    PhaseFuckerProcessor::ExportInfo info;
+    PhaseFixerProcessor& proc;
+    PhaseFixerProcessor::ExportInfo info;
     juce::String shown;
     juce::uint32 readyAt = 0;
     bool dragged = false, menu = false;

@@ -1,5 +1,5 @@
 // Runs the analyzer on two WAV files and prints the rotation the plugin would apply.
-//   phasefucker_align <reference.wav> <track.wav> [max-lag-ms]
+//   phasefixer_align <reference.wav> <track.wav> [max-lag-ms]
 // Both files are mixed to mono and must share a sample rate. Reads 16/24/32-bit
 // PCM and 32-bit float. No JUCE, so it builds with the core.
 
